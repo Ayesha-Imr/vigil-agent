@@ -7,7 +7,7 @@ import { type TSchema, Type } from "typebox";
 import type { Urgency } from "../core/governor.ts";
 import type { JobAction, JobKind } from "../core/scheduler.ts";
 import type { Origin, ReportKind, Ticket } from "../core/tickets.ts";
-import { HOUR, MINUTE } from "../core/time.ts";
+import { HOUR } from "../core/time.ts";
 import type { WatcherKind } from "../core/watchers.ts";
 import { noteToConcierge, sendSolicited, type Services } from "./services.ts";
 
@@ -362,4 +362,3 @@ export function triageTools(onDecide: (d: TriageDecision) => void): ToolDefiniti
 	];
 }
 
-export const _test = { clip, MINUTE };

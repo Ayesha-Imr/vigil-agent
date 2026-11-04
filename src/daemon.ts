@@ -11,7 +11,7 @@ import { Concierge } from "./agent/concierge.ts";
 import { loadGatePolicy } from "./agent/gate.ts";
 import { ModelRouter } from "./agent/models.ts";
 import { DREAM_PROMPT, fill, HEARTBEAT_PROMPT } from "./agent/prompts.ts";
-import { sendSolicited, type Services } from "./agent/services.ts";
+import type { Services } from "./agent/services.ts";
 import { buildSession, promptWithFallback } from "./agent/sessions.ts";
 import { triage } from "./agent/triage.ts";
 import { WorkerPool } from "./agent/workers.ts";
@@ -743,4 +743,3 @@ function gitCommit(dir: string, message: string): Promise<void> {
 	})();
 }
 
-export const _forTests = { sendSolicited };

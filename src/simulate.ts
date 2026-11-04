@@ -5,7 +5,7 @@
 import { existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { type GovernorPolicy, initialState, type NoticeInput, offer, tick, type Urgency } from "./core/governor.ts";
-import { DAY, HOUR, localDate, MINUTE } from "./core/time.ts";
+import { DAY, localDate, MINUTE } from "./core/time.ts";
 
 export interface SimNotice {
 	at: number;
@@ -126,4 +126,3 @@ export function renderReport(days: DayReport[], source: string, policy: Governor
 	return lines.join("\n");
 }
 
-export const _forTests = { HOUR };
