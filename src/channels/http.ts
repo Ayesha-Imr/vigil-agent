@@ -245,9 +245,13 @@ export class HttpChannel implements Channel {
 			(req) => this.postButton(req),
 			(req) => this.validSignature(req),
 		);
+		// Keys are "METHOD /path", or "PUBLIC METHOD /path" for a route that needs no token (a static
+		// page that asks for the token itself; it must serve no data).
 		for (const [key, handler] of Object.entries(opts.handlers ?? {})) {
-			const [method, path] = key.split(" ");
-			if (method && path) this.server.route(method, path, handler);
+			const parts = key.split(" ");
+			const isPublic = parts[0] === "PUBLIC";
+			const [method, path] = isPublic ? parts.slice(1) : parts;
+			if (method && path) this.server.route(method, path, handler, isPublic ? () => true : undefined);
 		}
 	}
 

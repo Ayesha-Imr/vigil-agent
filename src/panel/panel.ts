@@ -97,8 +97,9 @@ export function panelState(d: Daemon): PanelState {
 /** Routes for the HTTP channel: the page, its state, and its buttons. */
 export function panelRoutes(daemon: () => Daemon | undefined): Record<string, RouteHandler> {
 	return {
-		"GET /": () => ({ status: 302, headers: { location: "/panel" } }),
-		"GET /panel": () => ({ body: PAGE, headers: { "content-type": "text/html; charset=utf-8" } }),
+		// The page is public static HTML: it asks for the token and sends it only to /api routes.
+		"PUBLIC GET /": () => ({ status: 302, headers: { location: "/panel" } }),
+		"PUBLIC GET /panel": () => ({ body: PAGE, headers: { "content-type": "text/html; charset=utf-8", "x-frame-options": "DENY", "referrer-policy": "no-referrer" } }),
 		"GET /api/state": () => {
 			const d = daemon();
 			return d ? { body: panelState(d) } : { status: 503, body: { error: "starting" } };
