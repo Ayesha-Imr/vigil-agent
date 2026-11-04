@@ -142,6 +142,7 @@ describe("vigil end to end", () => {
 			await h.daemon.tickOnce();
 		}
 		expect(h.channel.texts()).toEqual(["Your flight price dropped to $412."]);
+		expect(h.channel.sent[0].silent).toBe(true); // digests arrive without a buzz
 	});
 
 	it("sends a scheduled reminder at its time without a model call", async () => {

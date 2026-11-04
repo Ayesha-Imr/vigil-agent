@@ -25,6 +25,8 @@ export interface GovernorPolicy {
 	dedupWindowMinutes: number;
 	/** A waiting notice expires this many hours after it was offered, unless it sets its own expiry. */
 	defaultExpiryHours: number;
+	/** Send digests without sound or vibration: they are the batch that can wait (default true). */
+	silentDigests?: boolean;
 }
 
 export const DEFAULT_POLICY: GovernorPolicy = {

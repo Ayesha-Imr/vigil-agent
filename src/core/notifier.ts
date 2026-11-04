@@ -168,7 +168,8 @@ export class Notifier {
 			ref.kind === "notice"
 				? [[{ data: `mute:${ref.id}`, label: "🔕 Mute 1 day" }, { data: `less:${ref.id}`, label: "👎 Less like this" }]]
 				: undefined;
-		this.outbox.enqueue({ ...route, text: critical ? `🚨 ${text}` : text, ref, buttons });
+		const silent = ref.kind === "digest" && this.policy().silentDigests !== false;
+		this.outbox.enqueue({ ...route, text: critical ? `🚨 ${text}` : text, ref, buttons, silent });
 	}
 
 	private commit(state: GovernorState): void {
