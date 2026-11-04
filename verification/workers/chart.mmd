@@ -6,37 +6,29 @@ stateDiagram-v2
     lg0: stopped
     lg1: running
     lg2: resting
-    lg3: Breaks StoppedNeverRunsAgain in some cases
-    lg4: Path to the StoppedNeverRunsAgain bug
   }
   class lg0 pink
   class lg1 orange
   class lg2 blue
-  class lg3 mayBreak
-  class lg4 bugPath
   s0: Queued
   s1: Working: worker starting
   s2: Stopped by owner
   s3: Working: worker starting, message waiting
   s4: Working: turn in flight
   s5: Stopped by owner: worker starting
-  s6: Failed, waiting for a reply: run ending
+  s6: Stopped by owner: run ending
   s7: Idle, waiting for a reply: run ending
   s8: Stopped by owner: turn in flight
   s9: Finished (ready): turn in flight
   s10: Working: turn in flight, message waiting
-  s11: Stopped by owner: run ending
-  s12: Finished (ready): run ending
-  s13: Failed, waiting for a reply
-  s14: Idle, waiting for a reply
-  s15: Failed, waiting for a reply: run ending, message waiting
-  s16: Idle, waiting for a reply: run ending, message waiting
-  s17: Finished (ready): turn in flight, message waiting
-  s18: Queued: turn in flight, message waiting
-  s19: Finished (ready)
-  s20: Finished (ready): run ending, message waiting
-  s21: Queued: run ending, message waiting
-  s22: Finished (ready), message waiting
+  s11: Finished (ready): run ending
+  s12: Idle, waiting for a reply
+  s13: Idle, waiting for a reply: run ending, message waiting
+  s14: Queued: turn in flight, message waiting
+  s15: Ready, kept open for the waiting message: turn in flight, message waiting
+  s16: Finished (ready)
+  s17: Queued: run ending, message waiting
+  s18: Ready, kept open for the waiting message: run ending, message waiting
   [*] --> s0
   s0 --> s1: the 15 s pump starts it
   s0 --> s2: the owner sends /stop
@@ -46,70 +38,49 @@ stateDiagram-v2
   s1 --> s5: the owner sends /stop
   s3 --> s4: the worker session is ready
   s3 --> s5: the owner sends /stop
-  s4 --> s6: the model call fails
   s4 --> s7: the model turn returns
   s4 --> s8: the owner sends /stop
   s4 --> s9: the worker reports ready
   s4 --> s10: the owner writes to the ticket
-  s5 --> s8: the worker session is ready
-  s6 --> s13: the run ends
-  s7 --> s14: the run ends
-  s8 --> s11: the model call fails or the model turn returns
-  s9 --> s12: the model turn returns or the model call fails
+  s5 --> s6: the worker session is ready
+  s6 --> s2: the run ends
+  s7 --> s12: the run ends
+  s8 --> s6: the model turn returns
+  s9 --> s11: the model turn returns
   s9 --> s8: the owner sends /stop
-  s9 --> s18: the owner writes to the ticket
-  s10 --> s15: the model call fails
-  s10 --> s16: the model turn returns
+  s9 --> s14: the owner writes to the ticket
+  s10 --> s13: the model turn returns
   s10 --> s8: the owner sends /stop
-  s10 --> s17: the worker reports ready
-  s11 --> s2: the run ends
-  s12 --> s19: the run ends
-  s13 --> s2: the owner sends /stop
-  s13 --> s3: the owner writes to the ticket
-  s14 --> s2: the owner sends /stop
-  s14 --> s3: the owner writes to the ticket
-  s15 --> s3: the run ends
-  s16 --> s3: the run ends
-  s17 --> s20: the model turn returns or the model call fails
-  s17 --> s8: the owner sends /stop
-  s18 --> s17: the worker reports ready
-  s18 --> s15: the model call fails
-  s18 --> s21: the model turn returns
-  s18 --> s8: the owner sends /stop
-  s19 --> s2: the owner sends /stop
-  s19 --> s3: the owner writes to the ticket
-  s20 --> s22: the run ends
-  s21 --> s3: the run ends
-  s5 --> s11: the worker session is ready
-  s22 --> s2: the owner sends /stop
-  classDef mayBreak fill:#fff3e6,stroke:#e8730c,stroke-width:2.5px,color:#b85a06
+  s10 --> s15: the worker reports ready
+  s11 --> s16: the run ends
+  s12 --> s2: the owner sends /stop
+  s12 --> s3: the owner writes to the ticket
+  s13 --> s3: the run ends
+  s14 --> s15: the worker reports ready
+  s14 --> s17: the model turn returns
+  s14 --> s8: the owner sends /stop
+  s15 --> s18: the model turn returns
+  s15 --> s8: the owner sends /stop
+  s16 --> s2: the owner sends /stop
+  s16 --> s3: the owner writes to the ticket
+  s17 --> s3: the run ends
+  s18 --> s3: the run ends
   class s0 blue
-  class s0 bugPath
   class s1 orange
-  class s1 bugPath
   class s2 pink
-  class s2 mayBreak
   class s3 orange
   class s4 orange
   class s5 pink
-  class s5 bugPath
-  class s6 orange
+  class s6 pink
   class s7 orange
   class s8 pink
-  class s8 mayBreak
-  class s8 bugPath
   class s9 orange
   class s10 orange
-  class s11 pink
-  class s11 mayBreak
-  class s12 orange
-  class s13 blue
-  class s14 blue
+  class s11 orange
+  class s12 blue
+  class s13 orange
+  class s14 orange
   class s15 orange
-  class s16 orange
+  class s16 blue
   class s17 orange
   class s18 orange
-  class s19 blue
-  class s20 orange
-  class s21 orange
-  class s22 blue

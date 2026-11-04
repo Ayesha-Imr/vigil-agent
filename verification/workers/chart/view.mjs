@@ -10,6 +10,7 @@ export const state = (v) => {
   else if (stage === "queued") where = "Queued";
   else if (stage === "failed") where = "Failed, waiting for a reply";
   else if (stage === "idle") where = "Idle, waiting for a reply";
+  else if (stage === "review") where = "Ready, kept open for the waiting message";
   else if (stage === "working") where = "Working";
   else where = stage;
   if (r) {

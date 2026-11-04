@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Model-check the worker pool and ticket inputs (Workers.tla) and prove every property can fail.
-# Usage: verification/workers/check.sh        (from anywhere; ~45 s on 4 cores)
+# Usage: verification/workers/check.sh [--deep]   (from anywhere; ~70-85 s on 4 cores; --deep adds ~5 min)
 # Needs Java 17+ and tla2tools.jar: set TLA2TOOLS_JAR, else /home/user/tools/tla2tools.jar
 # or ~/tools/tla2tools.jar. Verified with TLC 2026.11.03.180953 (rev 309e489).
 # Prints one PASS/FAIL line per check and exits 1 if any result is not the expected one.
 # Read a counterexample with the pstack /statechart skill (see .claude/skills/verify-worker-slots).
 set -u
+DEEP=${DEEP:-0}; [ "${1:-}" = "--deep" ] && DEEP=1
 cd "$(dirname "$0")"
 JAR=${TLA2TOOLS_JAR:-}
 for c in "$JAR" /home/user/tools/tla2tools.jar "$HOME/tools/tla2tools.jar"; do [ -n "$c" ] && [ -f "$c" ] && JAR=$c && break; done
@@ -44,31 +45,45 @@ check() {
 check_big() { n=$((n + 1)); run_one "$n" auto "$@"; echo "$n" >> "$TMP/order"; }
 section() { n=$((n + 1)); echo "$1" > "$TMP/r$n"; echo "$n" >> "$TMP/order"; }
 
-section "== model of the current code (expect pass) =="
-check_big "Workers.cfg: NoDoubleRun SlotLimit ReservedSlotWorks StoppedRejectsInputs" Workers.tla Workers.cfg pass
+section "== required: the model of the current code (expect pass) =="
+check_big "Workers.cfg: slots, stop, inputs, retries (2 tickets, no crash)" Workers.tla Workers.cfg pass
+check "WorkersCrash.cfg: the same with a crash (1 ticket)"               Workers.tla WorkersCrash.cfg pass
+check_big "WorkersLive.cfg: OwnerNeverStarved NoInputStuck (2 tickets)"   Workers.tla WorkersLive.cfg pass
+check "WorkersLiveCrash.cfg: the same with a crash (1 ticket)"           Workers.tla WorkersLiveCrash.cfg pass
+check "WorkersOutage.cfg: EventLoopProgress RetryBackoff (models vanish)" Workers.tla WorkersOutage.cfg pass
+if [ "$DEEP" = 1 ]; then
+check_big "WorkersDeep.cfg: safety, 2 tickets + a crash (--deep)"         Workers.tla WorkersDeep.cfg pass
+check_big "WorkersLiveDeep.cfg: liveness, 2 tickets, 2 inputs (--deep)"   Workers.tla WorkersLiveDeep.cfg pass
+fi
 
-section "== findings in the current code (expect the violation; a PASS here means 'still reproduces') =="
-check "W1 StopDuringStart: /stop while the session builds, mandate still starts" Workers.tla findings/StopDuringStart.cfg "inv StoppedNeverRunsAgain"
-check "W2 OwnerInputStranded: input pending at 'ready' never delivered"          Workers.tla findings/OwnerInputStranded.cfg "temporal OwnerNeverStarved"
-check "W3 InputLost: cut first turn, next run has a new session"                 Workers.tla findings/InputLost.cfg "inv InputNeverLost"
-check "W4 HotLoop: no worker model -> run/fail/pump microtask loop"              Workers.tla findings/HotLoop.cfg "temporal EventLoopProgress"
-check "by design: the reserved slot is one slot; a 2nd owner ticket waits"      Workers.tla findings/SecondOwnerWaits.cfg "inv SecondOwnerNeverWaits"
+section "== regressions: the old findings W1-W4, fixed in 166ea0c / 4e2683a (expect pass) =="
+check "W1 StopDuringStart: /stop while the session builds"               Workers.tla regressions/StopDuringStart.cfg pass
+check "W2 OwnerInputStranded: input pending at 'ready' is delivered"     Workers.tla regressions/OwnerInputStranded.cfg pass
+check "W3 InputLostCutTurn: a cut turn re-queues unpersisted inputs"     Workers.tla regressions/InputLostCutTurn.cfg pass
+check "W4 HotLoop: no worker model does not starve the event loop"       Workers.tla regressions/HotLoop.cfg pass
 
-section "== fix variants (expect pass) =="
-check "fix W1 alone: run() re-reads the ticket after await session"   Workers.tla findings/StopDuringStart.cfg pass SpecFixW1
-check "fix W3 alone: session_file stored before the first prompt"     Workers.tla findings/InputLost.cfg pass SpecFixW3
-check "fix W4 alone: no re-pump after a failed session start"         Workers.tla findings/HotLoop.cfg pass SpecFixW4
-check_big "all fixes: every property incl. OwnerNeverStarved NoInputLost" Workers.tla fixes/FixAll.cfg pass
+section "== open findings (expect the violation; a PASS here means 'still reproduces') =="
+check "W3c CrashLosesInput: crash in a first turn loses its input"       Workers.tla findings/CrashLosesInput.cfg "inv InputNeverLostSilently"
+check "suggested fix for W3c: session_file stored before the prompt"     Workers.tla findings/FixW3c.cfg pass
 
-section "== mutants (expect the named violation) =="
-check "MutNoRunningHas -> NoDoubleRun"                     mutants/MutNoRunningHas.tla mutants/MutNoRunningHas.cfg "inv NoDoubleRun"
-check "MutAnyInputReserves -> SlotLimit"                   mutants/MutAnyInputReserves.tla mutants/MutAnyInputReserves.cfg "inv SlotLimit"
-check "MutNoReservedSlot -> ReservedSlotWorks"             mutants/MutNoReservedSlot.tla mutants/MutNoReservedSlot.cfg "inv ReservedSlotWorks"
-check "MutAddInputIgnoresStop -> StoppedRejectsInputs"     mutants/MutAddInputIgnoresStop.tla mutants/MutAddInputIgnoresStop.cfg "inv StoppedRejectsInputs"
-check "MutStopIgnoredOnFix -> StoppedNeverRunsAgain"       mutants/MutStopIgnoredOnFix.tla mutants/MutStopIgnoredOnFix.cfg "inv StoppedNeverRunsAgain"
-check "MutRunnableQueuedOnly -> OwnerNeverStarved"         mutants/MutRunnableQueuedOnly.tla mutants/MutRunnableQueuedOnly.cfg "temporal OwnerNeverStarved"
-check "MutTakeAtCap -> NoInputLost (InputNeverLost)"       mutants/MutTakeAtCap.tla mutants/MutTakeAtCap.cfg "inv InputNeverLost"
-check "MutRepumpAfterFailedStart -> EventLoopProgress"     mutants/MutRepumpAfterFailedStart.tla mutants/MutRepumpAfterFailedStart.cfg "temporal EventLoopProgress"
+section "== by design (expect the violation) =="
+check "the reserved slot is one slot; a 2nd owner ticket waits"          Workers.tla bydesign/SecondOwnerWaits.cfg "inv SecondOwnerNeverWaits"
+check "the 3rd cut turn in a row drops its inputs (owner is told)"       Workers.tla bydesign/DroppedAfterThreeCuts.cfg "inv InputNeverLost"
+
+section "== mutants (expect the named violation; guard demos expect pass) =="
+check "MutNoRunningHas -> NoDoubleRun"                         mutants/MutNoRunningHas.tla mutants/MutNoRunningHas.cfg "inv NoDoubleRun"
+check "MutAnyInputReserves -> SlotLimit"                       mutants/MutAnyInputReserves.tla mutants/MutAnyInputReserves.cfg "inv SlotLimit"
+check "MutNoReservedSlot -> ReservedSlotWorks"                 mutants/MutNoReservedSlot.tla mutants/MutNoReservedSlot.cfg "inv ReservedSlotWorks"
+check "MutAddInputIgnoresStop -> StoppedStaysStopped"          mutants/MutAddInputIgnoresStop.tla mutants/MutAddInputIgnoresStop.cfg "inv StoppedStaysStopped"
+check "MutNoRecheck (revert W1) -> StoppedNeverRunsAgain"      mutants/MutNoRecheck.tla mutants/MutNoRecheck.cfg "inv StoppedNeverRunsAgain"
+check "MutReportEnds (revert W2) -> OwnerNeverStarved"         mutants/MutReportEnds.tla mutants/MutReportEnds.cfg "temporal OwnerNeverStarved"
+check "MutRunnableQueuedOnly -> NoInputStuck"                  mutants/MutRunnableQueuedOnly.tla mutants/MutRunnableQueuedOnly.cfg "temporal NoInputStuck"
+check "MutNoReadd (revert W3) -> InputKeptForTwoCuts"          mutants/MutNoReadd.tla mutants/MutNoReadd.cfg "inv InputKeptForTwoCuts"
+check "MutTakeAtCap -> InputKeptForTwoCuts"                    mutants/MutTakeAtCap.tla mutants/MutTakeAtCap.cfg "inv InputKeptForTwoCuts"
+check "MutNoReaddCap (break 4e2683a) -> RetriesBounded"        mutants/MutNoReaddCap.tla mutants/MutNoReaddCap.cfg "inv RetriesBounded"
+check "MutNoCooldown (break W4) -> RetryBackoff"               mutants/MutNoCooldown.tla mutants/MutNoCooldown.cfg "inv RetryBackoff"
+check "MutRepumpAfterFailedStart (revert W4) -> EventLoopProgress" mutants/MutRepumpAfterFailedStart.tla mutants/MutRepumpAfterFailedStart.cfg "temporal EventLoopProgress"
+check "MutRepumpOnly (guard demo: failedStart test alone holds it)" mutants/MutRepumpOnly.tla mutants/MutRepumpOnly.cfg pass
 
 wait
 while read -r i; do cat "$TMP/r$i"; done < "$TMP/order"

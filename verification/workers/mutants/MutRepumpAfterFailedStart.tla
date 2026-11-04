@@ -1,10 +1,10 @@
 -------------------- MODULE MutRepumpAfterFailedStart --------------------
 (* MUTANT for EventLoopProgress (expect: Temporal property                  *)
-(* EventLoopProgress was violated). Starts from Workers!Fixed (whose       *)
-(* finally does not re-pump after a failed session start) and puts back    *)
-(* the current src/agent/workers.ts pump(): .finally(() => { ...;          *)
-(* this.pump(); }) for every run, including one whose session failed.     *)
+(* EventLoopProgress was violated). Reverts both halves of the W4 fix in   *)
+(* src/agent/workers.ts: the continuation pumps again even when run()      *)
+(* resolved false (`if (started) this.pump()` -> `this.pump()`), and pump  *)
+(* drops the failedStart test.                                             *)
 EXTENDS Workers
 
-SpecM == SpecWith([Fixed EXCEPT !.pumpAfterFailedStart = TRUE])
+SpecM == SpecWith([Base EXCEPT !.pumpAfterFailedStart = TRUE, !.cooldown = FALSE])
 =============================================================================

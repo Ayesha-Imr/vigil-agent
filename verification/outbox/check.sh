@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Model-check vigil's outbox (src/core/outbox.ts). One command:
-#   bash verification/outbox/check.sh          # ~45 s
-#   bash verification/outbox/check.sh --deep   # adds two larger runs, ~3 min more
+#   bash verification/outbox/check.sh          # ~1-2 min
+#   bash verification/outbox/check.sh --deep   # adds three larger runs, a few min more
 # Needs Java 11+ and tla2tools.jar (TLC). Set TLA2TOOLS to its path if it is not at the default.
 # Every line is PASS or FAIL. The current code passes the properties; each mutant must fail its
 # own property; each finding and characterization must still show its violation. Exit 1 on any
@@ -55,33 +55,41 @@ if [ "${1:-}" = "--trace" ]; then
 		sed -n '/is violated\|was violated/,/states generated/p' |
 		awk '/^(\/\\ |State [0-9]+|Error|Back to state|[0-9]+ states generated)/ { if (buf != "") print buf; buf = $0; next }
 		     { sub(/^ +/, " "); buf = buf $0 } END { if (buf != "") print buf }' |
-		grep -E '^(Error|State [0-9]+|Back to state)|^/\\ (status|attempts|due|okey|ext|refs|up|chanUp|log|pass) ' |
+		grep -E '^(Error|State [0-9]+|Back to state)|^/\\ (status|attempts|due|okey|ext|refs|up|chanUp|log|pass|orphans|proc|lock|fresh) ' |
 		sed -E -e 's/ line [0-9]+, col [0-9]+ to line [0-9]+, col [0-9]+ of module [A-Za-z]+//' \
 			-e 's/(ord|split|splitBA|gap|tkt) \|-> (TRUE|FALSE),? ?//g' -e 's/fl \|-> \[ *\]/fl/g' \
 			-e 's/todo \|-> <<>>, //g' -e 's/ +/ /g'
 	exit 0
 fi
 
-echo "== current code (src/core/outbox.ts)"
-expect_pass "safety  Outbox.cfg     " "$DIR" Outbox.tla Outbox.cfg
-expect_pass "liveness OutboxLive.cfg" "$DIR" Outbox.tla OutboxLive.cfg
+echo "== current code (src/core/outbox.ts, services.ts, sessions.ts, daemon.ts lock)"
+expect_pass "safety  Outbox.cfg        " "$DIR" Outbox.tla Outbox.cfg
+expect_pass "liveness OutboxLive.cfg   " "$DIR" Outbox.tla OutboxLive.cfg
+expect_pass "fixed   TwoDaemonsLocked  " "$DIR" Outbox.tla fixed/TwoDaemonsLocked.cfg
+expect_pass "fixed   ApprovalAskInOrder" "$DIR" Outbox.tla fixed/ApprovalAskInOrder.cfg
 if [ "${1:-}" = "--deep" ]; then
-	expect_pass "safety  OutboxDeep.cfg    " "$DIR" Outbox.tla OutboxDeep.cfg
+	expect_pass "safety  OutboxDeep.cfg     " "$DIR" Outbox.tla OutboxDeep.cfg
+	expect_pass "safety  OutboxDeepRows.cfg " "$DIR" Outbox.tla OutboxDeepRows.cfg
 	expect_pass "liveness OutboxLiveDeep.cfg" "$DIR" Outbox.tla OutboxLiveDeep.cfg
 fi
 
 echo "== mutants (each must break its property; see the header of each .tla)"
 M="$DIR/mutants"
-expect_violation "mutant MutHeldBackDueOnly" "$M" MutHeldBackDueOnly.tla MutHeldBackDueOnly.cfg OrderPreserved
-expect_violation "mutant MutNoSplitKey     " "$M" MutNoSplitKey.tla MutNoSplitKey.cfg SplitPartsInOrder
-expect_violation "mutant MutNoRunningGuard " "$M" MutNoRunningGuard.tla MutNoRunningGuard.cfg AtMostOnceWithoutCrash
-expect_violation "mutant MutRefOutsideTx   " "$M" MutRefOutsideTx.tla MutRefOutsideTx.cfg RefRecorded
-expect_violation "mutant MutPendingOnly    " "$M" MutPendingOnly.tla MutPendingOnly.cfg NoLoss
+expect_violation "mutant MutHeldBackDueOnly   " "$M" MutHeldBackDueOnly.tla MutHeldBackDueOnly.cfg OrderPreserved
+expect_violation "mutant MutNoSplitKey        " "$M" MutNoSplitKey.tla MutNoSplitKey.cfg SplitPartsInOrder
+expect_violation "mutant MutQuestionNoTicketId" "$M" MutQuestionNoTicketId.tla MutQuestionNoTicketId.cfg TicketMessagesInOrder
+expect_violation "mutant MutApprovalNoKey     " "$M" MutApprovalNoKey.tla MutApprovalNoKey.cfg TicketMessagesInOrder
+expect_violation "mutant MutNoRunningGuard    " "$M" MutNoRunningGuard.tla MutNoRunningGuard.cfg AtMostOnceWithoutCrashOrTimeout
+expect_violation "mutant MutNoLock            " "$M" MutNoLock.tla MutNoLock.cfg AtMostOnceWithoutCrashOrTimeout
+expect_violation "mutant MutLockNoTx          " "$M" MutLockNoTx.tla MutLockNoTx.cfg AtMostOnceWithoutCrashOrTimeout
+expect_violation "mutant MutRefOutsideTx      " "$M" MutRefOutsideTx.tla MutRefOutsideTx.cfg RefRecorded
+expect_violation "mutant MutPendingOnly       " "$M" MutPendingOnly.tla MutPendingOnly.cfg NoLoss
+expect_violation "mutant MutNoSendTimeout     " "$M" MutNoSendTimeout.tla MutNoSendTimeout.cfg NoLoss
 
-echo "== findings (bugs in the current code; PASS = still reproduced)"
+echo "== open findings (bugs in the current code; PASS = still reproduced)"
 F="$DIR/findings"
-expect_violation "finding TicketQuestionOutOfOrder" "$DIR" Outbox.tla "$F/TicketQuestionOutOfOrder.cfg" TicketMessagesInOrder
-expect_violation "finding TwoDaemonsDoubleSend    " "$DIR" Outbox.tla "$F/TwoDaemonsDoubleSend.cfg" AtMostOnceWithoutCrash
+expect_violation "finding HelperApprovalOutOfOrder" "$DIR" Outbox.tla "$F/HelperApprovalOutOfOrder.cfg" TicketMessagesInOrder
+expect_violation "finding NoProcStaleTakeover     " "$DIR" Outbox.tla "$F/NoProcStaleTakeover.cfg" AtMostOnceWithoutCrashOrTimeout
 
 echo "== characterizations (behavior by design, stated plainly; PASS = still behaves so)"
 C="$DIR/characterizations"
@@ -89,7 +97,8 @@ expect_violation "characterization SplitOvertakesBlockedPart" "$DIR" Outbox.tla 
 expect_violation "characterization SplitGapAfterDrop        " "$DIR" Outbox.tla "$C/SplitGapAfterDrop.cfg" SplitPartsNoGap
 expect_violation "characterization CrashResends             " "$DIR" Outbox.tla "$C/CrashResends.cfg" NoDuplicates
 expect_violation "characterization CrashCopyUnroutable      " "$DIR" Outbox.tla "$C/CrashCopyUnroutable.cfg" EveryCopyRoutable
-expect_violation "characterization ErrorAfterDeliveryResends" "$DIR" Outbox.tla "$C/ErrorAfterDeliveryResends.cfg" AtMostOnceWithoutCrash
+expect_violation "characterization TimeoutResends           " "$DIR" Outbox.tla "$C/TimeoutResends.cfg" AtMostOnceWithoutCrash
+expect_violation "characterization ErrorAfterDeliveryResends" "$DIR" Outbox.tla "$C/ErrorAfterDeliveryResends.cfg" AtMostOnceWithoutCrashOrTimeout
 expect_violation "characterization ChannelDownStrands       " "$DIR" Outbox.tla "$C/ChannelDownStrands.cfg" NoLoss
 
 if [ "$bad" -ne 0 ]; then echo "RESULT: FAIL (unexpected result above)"; exit 1; fi

@@ -21,13 +21,16 @@
 (*  - run(): `await this.session(t)` and `await promptWithFallback(...)`   *)
 (*    are the interleaving points. Everything from one await to the next   *)
 (*    (takeInputs, the loop test, the post-loop report) is one step.       *)
-(*  - The `.finally(() => { running.delete; pump() })` callback is its own *)
-(*    step (a microtask after run() settles).                              *)
+(*  - pump()'s continuation `.then((started) => { running.delete; dispose; *)
+(*    if (started) pump() })` is its own step (a microtask after run()     *)
+(*    settles). run() resolves false after a failed start or a cut turn.   *)
 (*  - Microtasks run before any macrotask (timer, I/O, model reply). The   *)
 (*    model tracks this with Micro: while a run has a microtask pending,   *)
 (*    no macrotask step can happen.                                        *)
-(*  - A crash kills the process: runs and their sessions vanish; every DB  *)
-(*    row stays. Restart = Daemon.start -> WorkerPool.recover().           *)
+(*  - A crash kills the process: runs, their sessions and the failedStart  *)
+(*    and cutTurns maps vanish; every DB row stays. Restart =              *)
+(*    Daemon.start -> WorkerPool.recover().                                *)
+(*  - The 60 s of failedStart is a macrotask step of its own (MinutePasses).*)
 (***************************************************************************)
 EXTENDS Integers, Sequences, FiniteSets, TLC
 
@@ -54,11 +57,14 @@ Base == [ skipRunning     |-> TRUE,   \* pump: if (this.running.has(t.id)) conti
           runnableInputs  |-> TRUE,   \* runnable(): ... || (stage !== 'working' && hasPendingInputs)
           takeAtCap       |-> FALSE,  \* run(): takeInputs happens before the turn-cap test
           checkStopped    |-> TRUE,   \* addInput: if (!t || t.stopped_by_owner) return false;
-          recheckAfterSession |-> FALSE, \* FIX W1: run() re-reads the ticket after `await session`
-          pumpAfterFailedStart |-> TRUE, \* finally re-pumps also after a failed session start
-          fileBeforePrompt |-> FALSE,   \* FIX W3: session_file stored before the first prompt
           reservedSlot    |-> TRUE,   \* pump: limit = ownerWaiting ? max + 1 : max
-          reportKeepsOpen |-> FALSE ] \* FIX W2: report ready/dropped keeps a ticket with pending input open
+          recheckAfterSession |-> TRUE,  \* W1 fix: run() re-reads the ticket after `await session`
+          reportKeepsOpen |-> TRUE,   \* W2 fix: report ready/dropped does not end a ticket with pending input
+          readd           |-> TRUE,   \* W3 fix: a cut turn whose session file never reached disk re-adds its inputs
+          readdCap        |-> TRUE,   \* ... only while cutTurns <= 2 (4e2683a)
+          pumpAfterFailedStart |-> FALSE, \* W4 fix: no re-pump after a failed start or a cut turn
+          cooldown        |-> TRUE,   \* W4 fix: pump skips a ticket whose failedStart is < 60 s old
+          fileBeforePrompt |-> FALSE ] \* SUGGESTED fix for W3c: session_file stored before the first prompt
 
 VARIABLES
     status,     \* tickets.status: "open" | "ended"
@@ -68,19 +74,25 @@ VARIABLES
                 \* of a report made since the run started, which the run tracks as `rep`)
     sessFile,   \* tickets.session_file IS NOT NULL
     inputs,     \* ticket_inputs, abstracted: [own |-> t -> some pending owner_message/answer row,
-                \*   oth |-> t -> some pending note/recovery row, lost |-> some row was marked
-                \*   delivered but never reached a turn that returned or a session that is reopened].
+                \*   oth |-> t -> some pending note/recovery row, and how a row marked delivered
+                \*   failed to reach a turn that returned or a session file that is reopened:
+                \*   lost |-> silently (a crash; nobody is told), dropNotified |-> after the
+                \*   owner was told the turn failed (the 3rd cut turn in a row), droppedEarly
+                \*   |-> before two re-queues (never, in the current code)].
                 \* The code only asks whether pending rows exist (COUNT > 0) and takeInputs takes
                 \* ALL pending rows of a ticket at once, so "this row is eventually taken" is
                 \* the same as "the ticket has no pending row again". `added` bounds the rows.
-                \* A run's `taken` says its turn in flight holds rows.
+                \* A run's tOwn/tOth say which kinds of rows its turn in flight holds.
     added,      \* inputs added by owner/concierge so far (bound)
-    runs,       \* WorkerPool.running: [tk, k, ph, turn, rep, fresh, owner, taken, failedStart]
+    runs,       \* WorkerPool.running: [tk, k, ph, turn, rep, fresh, owner, tOwn, tOth, onDisk, noPump]
+    cooling,    \* WorkerPool.failedStart has the ticket and it is < 60 s old (memory)
+    cut,        \* WorkerPool.cutTurns: consecutive cut turns, 0..3 (memory)
     up, crashes, modelOk, flips,
     pumped,     \* the last step ended with a call to pump()
-    hist        \* history for StoppedStaysStopped: [addedAfterStop, runAfterStop, turnAfterStop]
+    hist        \* history: [addedAfterStop, runAfterStop, turnAfterStop] for StoppedStaysStopped,
+                \* readds (t -> re-queues since the last clean turn, 0..3), startedCooling
 
-vars == <<status, stage, stopped, lastRep, sessFile, inputs, added, runs,
+vars == <<status, stage, stopped, lastRep, sessFile, inputs, added, runs, cooling, cut,
           up, crashes, modelOk, flips, pumped, hist>>
 
 OwnerKinds == {"owner"}            \* 'owner_message' and 'answer'
@@ -97,7 +109,7 @@ HasPendingIn(t, inp) == inp.own[t] \/ inp.oth[t]
 OwnerWaitingIn(t, inp) == inp.own[t]
 
 \* Tickets.runnable(): open AND (stage = 'queued' OR (stage != 'working' AND hasPendingInputs))
-\* code: src/core/tickets.ts:215-222 hasPendingInputs, runnable
+\* code: src/core/tickets.ts:229-236 hasPendingInputs, runnable
 RunnableIn(V, t, sts, sgs, inp) ==
     /\ sts[t] = "open"
     /\ \/ sgs[t] = "queued"
@@ -108,12 +120,13 @@ RunsOf(t, rs) == {r \in rs : r.tk = t}
 (***************************************************************************)
 (* WorkerPool.pump(), the for loop over runnable() in created_at order:    *)
 (*   if (running.has(t.id)) continue;                                      *)
+(*   if (failedStart.get(t.id) > now - 60_000) continue;                   *)
 (*   limit = ownerWaiting ? max + 1 : max;                                 *)
 (*   if (running.size >= limit) continue;                                  *)
 (*   start run(t)                                                          *)
 (* Returns the set of tickets it starts.                                   *)
 (***************************************************************************)
-\* code: src/agent/workers.ts:37-47 pump
+\* code: src/agent/workers.ts:43-54 pump
 PumpStarts(V, base, sts, sgs, inp) ==
     LET N == Len(TicketOrder)
         st[i \in 0..N] ==
@@ -125,12 +138,13 @@ PumpStarts(V, base, sts, sgs, inp) ==
                      limit == IF wait /\ V.reservedSlot THEN MAX + 1 ELSE MAX
                  IN IF /\ RunnableIn(V, t, sts, sgs, inp)
                        /\ ~(V.skipRunning /\ RunsOf(t, base) # {})
+                       /\ ~(V.cooldown /\ cooling[t])
                        /\ size < limit
                     THEN prev \cup {t} ELSE prev
     IN st[N]
 
 \* The synchronous start of run(t): startedAt; setStage(t.id, 'working'); then `await session`.
-\* code: src/agent/workers.ts:48, 87-89 run() start
+\* code: src/agent/workers.ts:55, 115-117 run() start
 NewRun(t, base, inp) ==
     [tk |-> t,
      k |-> Cardinality(RunsOf(t, base)) + 1,   \* tells apart two runs of one ticket (never > 1 in Base)
@@ -139,23 +153,25 @@ NewRun(t, base, inp) ==
      rep |-> FALSE,                     \* reported: the last report since startedAt is not 'progress'
      fresh |-> ~lastRep[t],             \* !t.last_report, from the runnable() snapshot
      owner |-> OwnerWaitingIn(t, inp),  \* started with owner input pending
-     taken |-> FALSE,
-     failedStart |-> FALSE]
+     tOwn |-> FALSE, tOth |-> FALSE,    \* kinds of the rows the turn in flight took
+     onDisk |-> FALSE,                  \* pi has written this run's session file
+     noPump |-> FALSE]                  \* run() resolved false: its continuation does not pump
 
 \* pump() as the last statement of a step. base = running map, sts/sgs/inp/h =
 \* the state the code before it left. Sets runs', stage', pumped', hist'.
-\* code: src/agent/workers.ts:37-55 pump
+\* code: src/agent/workers.ts:43-74 pump
 Pump(V, base, sts, sgs, inp, h) ==
     LET S == PumpStarts(V, base, sts, sgs, inp) IN
     /\ runs' = base \cup {NewRun(t, base, inp) : t \in S}
     /\ stage' = [t \in Tickets |-> IF t \in S THEN "working" ELSE sgs[t]]
     /\ pumped' = TRUE
-    /\ hist' = [h EXCEPT !.runAfterStop = @ \/ \E t \in S : stopped[t]]
+    /\ hist' = [h EXCEPT !.runAfterStop = @ \/ \E t \in S : stopped[t],
+                         !.startedCooling = @ \/ \E t \in S : cooling[t]]
 
-\* A microtask is pending: a run settled (its finally callback is queued), or a
+\* A microtask is pending: a run settled (its continuation is queued), or a
 \* run is about to fail its session without I/O (buildSession throws at once
 \* because s.models.pick("worker") is undefined). WorkerPool.sessions holds a
-\* session only during a run (run() and its finally both dispose it), so a
+\* session only during a run (pump's continuation disposes it), so a
 \* run always builds its session, from tickets.session_file.
 Micro == \E r \in runs :
             \/ r.ph = "ending"
@@ -168,7 +184,10 @@ Init ==
     /\ stopped = [t \in Tickets |-> FALSE]
     /\ lastRep = [t \in Tickets |-> FALSE]
     /\ sessFile = [t \in Tickets |-> FALSE]
-    /\ inputs = [own |-> [t \in Tickets |-> FALSE], oth |-> [t \in Tickets |-> FALSE], lost |-> FALSE]
+    /\ inputs = [own |-> [t \in Tickets |-> FALSE], oth |-> [t \in Tickets |-> FALSE],
+                 lost |-> FALSE, dropNotified |-> FALSE, droppedEarly |-> FALSE]
+    /\ cooling = [t \in Tickets |-> FALSE]
+    /\ cut = [t \in Tickets |-> 0]
     /\ added = 0
     /\ runs = {}
     /\ up = TRUE
@@ -176,22 +195,23 @@ Init ==
     /\ modelOk = TRUE
     /\ flips = 0
     /\ pumped = FALSE
-    /\ hist = [addedAfterStop |-> FALSE, runAfterStop |-> FALSE, turnAfterStop |-> FALSE]
+    /\ hist = [addedAfterStop |-> FALSE, runAfterStop |-> FALSE, turnAfterStop |-> FALSE,
+               readds |-> [t \in Tickets |-> 0], startedCooling |-> FALSE]
 
 (* daemon.ts start(): every(15_000, () => this.workers.pump()), and the     *)
 (* pump() at the end of start(), wakeWorkers from spawn_ticket, /resume.    *)
-\* code: src/daemon.ts:192, 201 (15 s timer, end of start); src/daemon.ts:81 wakeWorkers
+\* code: src/daemon.ts:254, 263 (15 s timer, end of start); src/daemon.ts:104 wakeWorkers
 TimerPump(V) ==
     /\ up /\ ~Micro
     /\ Pump(V, runs, status, stage, inputs, hist)
-    /\ UNCHANGED <<status, stopped, lastRep, sessFile, inputs, added, up, crashes, modelOk, flips>>
+    /\ UNCHANGED <<status, stopped, lastRep, sessFile, inputs, added, cooling, cut, up, crashes, modelOk, flips>>
 
 (* daemon.ts route(): s.tickets.addInput(ref.id, "owner_message", text) or  *)
 (* addInput(at.ticket_id, "answer", ...), then this.workers.pump(); and the *)
 (* concierge's ticket_message tool (kind 'note' from a system origin).      *)
 (* Tickets.addInput: reject a stopped ticket; insert the row; an ended      *)
 (* ticket reopens as queued; blocked/failed/idle/answer/review -> queued.   *)
-\* code: src/daemon.ts:455-471, 554-555 route; src/agent/tools.ts:152-162 ticket_message; src/core/tickets.ts:188-204 addInput
+\* code: src/daemon.ts:528-544, 638-639 route/answer button; src/agent/tools.ts:154-165 ticket_message; src/core/tickets.ts:202-218 addInput
 OwnerMessage(V, t, kind) ==
     /\ up /\ ~Micro
     /\ added < MaxInputs
@@ -206,12 +226,12 @@ OwnerMessage(V, t, kind) ==
           /\ status' = sts
           /\ added' = added + 1
           /\ Pump(V, runs, sts, sgs, inp, [hist EXCEPT !.addedAfterStop = @ \/ stopped[t]])
-    /\ UNCHANGED <<stopped, lastRep, sessFile, up, crashes, modelOk, flips>>
+    /\ UNCHANGED <<stopped, lastRep, sessFile, cooling, cut, up, crashes, modelOk, flips>>
 
 (* /stop <id> (daemon.ts handleCommand) and the ticket_stop tool:           *)
 (* Tickets.stop: status 'ended', stage 'stopped', stopped_by_owner = 1, its *)
 (* pending inputs 'delivered'. It does not touch a run in flight.           *)
-\* code: src/daemon.ts:669 /stop; src/agent/tools.ts:163-173 ticket_stop; src/core/tickets.ts:173-185 stop
+\* code: src/daemon.ts:785 /stop; src/agent/tools.ts:165-175 ticket_stop; src/core/tickets.ts:187-199 stop
 Stop(t) ==
     /\ up /\ ~Micro
     /\ ~stopped[t]
@@ -220,26 +240,26 @@ Stop(t) ==
     /\ stopped' = [stopped EXCEPT ![t] = TRUE]
     /\ inputs' = [inputs EXCEPT !.own[t] = FALSE, !.oth[t] = FALSE]   \* pending -> 'delivered'
     /\ pumped' = FALSE
-    /\ UNCHANGED <<lastRep, sessFile, added, runs, up, crashes, modelOk, flips, hist>>
+    /\ UNCHANGED <<lastRep, sessFile, added, runs, cooling, cut, up, crashes, modelOk, flips, hist>>
 
 (***************************************************************************)
 (* run(), after the post-loop code: workers.ts                             *)
 (*   const now = tickets.get(t.id);                                        *)
 (*   reported = last_report since startedAt and kind !== 'progress'        *)
-(*   if (ended && stage === 'stopped') { dispose; return }                 *)
+(*   if (ended && stage === 'stopped') return true;                        *)
 (*   if (!reported && stage === 'working') report(t.id, 'waiting', ...)    *)
-(*   dispose(t.id)                                                         *)
+(*   return true      (pump's continuation disposes the session)           *)
 (* sg/lr: stage and lastRep as the same step left them.                    *)
 (***************************************************************************)
-\* code: src/agent/workers.ts:124-137; src/core/tickets.ts:151-170 report
-PostLoop(r, rs, sg, lr) ==
+\* code: src/agent/workers.ts:166-176; src/core/tickets.ts:164-184 report
+PostLoop(r, rs, sg, lr) ==   \* rs: the running set without this run's old record
     LET t == r.tk
         reported == r.rep
         waiting  == ~reported /\ sg[t] = "working" /\ ~(status[t] = "ended" /\ sg[t] = "stopped")
     IN
     /\ stage' = IF waiting THEN [sg EXCEPT ![t] = "idle"] ELSE sg          \* report 'waiting' -> idle
     /\ lastRep' = IF waiting THEN [lr EXCEPT ![t] = TRUE] ELSE lr
-    /\ runs' = (rs \ {r}) \cup {[r EXCEPT !.ph = "ending", !.taken = FALSE]}
+    /\ runs' = rs \cup {[r EXCEPT !.ph = "ending", !.tOwn = FALSE, !.tOth = FALSE]}
 
 (***************************************************************************)
 (* One pass of run()'s loop from `takeInputs` to the next await:           *)
@@ -251,8 +271,8 @@ PostLoop(r, rs, sg, lr) ==
 (*   }  ... post-loop                                                      *)
 (* inp/sg/lr: the state the same step left before the loop test.          *)
 (***************************************************************************)
-\* code: src/agent/workers.ts:98-102, 111; src/core/tickets.ts:207-213 takeInputs
-LoopStep(V, r, turn, inp, sg, lr) ==
+\* code: src/agent/workers.ts:131-135, 144; src/core/tickets.ts:221-227 takeInputs
+LoopStep(V, r, turn, inp, sg, lr, rs, h) ==   \* rs: the running set without this run's old record
     LET t      == r.tk
         P      == HasPendingIn(t, inp)
         capped == turn >= TURNS
@@ -261,56 +281,66 @@ LoopStep(V, r, turn, inp, sg, lr) ==
     IF ~capped /\ (first \/ P)
     THEN \* takeInputs marks them delivered; the turn starts
          /\ inputs' = [inp EXCEPT !.own[t] = FALSE, !.oth[t] = FALSE]
-         /\ runs' = (runs \ {r}) \cup {[r EXCEPT !.ph = "prompting", !.turn = turn, !.taken = P]}
+         /\ runs' = rs \cup {[r EXCEPT !.ph = "prompting", !.turn = turn,
+                                                !.tOwn = inp.own[t], !.tOth = inp.oth[t]]}
          /\ stage' = sg /\ lastRep' = lr
-         /\ hist' = [hist EXCEPT !.turnAfterStop = @ \/ stopped[t]]
+         /\ hist' = [h EXCEPT !.turnAfterStop = @ \/ stopped[t]]
     ELSE \* the loop ends (no input, or the cap)
          /\ inputs' = IF capped /\ V.takeAtCap   \* mutant: taken, then the cap breaks the loop
-                      THEN [inp EXCEPT !.own[t] = FALSE, !.oth[t] = FALSE, !.lost = @ \/ P]
+                      THEN [inp EXCEPT !.own[t] = FALSE, !.oth[t] = FALSE, !.droppedEarly = @ \/ P]
                       ELSE inp
-         /\ PostLoop(r, runs, sg, lr)
-         /\ hist' = hist
+         /\ PostLoop(r, rs, sg, lr)
+         /\ hist' = h
 
 (* `session = await this.session(t)` resolves: buildSession succeeds       *)
 (* (needs a model for the role; it does I/O, so this is a macrotask).       *)
-\* code: src/agent/workers.ts:92 (session 57-85)
+(*   failedStart.delete(t.id);                                             *)
+(*   const t = tickets.get(t0.id);                                         *)
+(*   if (!t || t.stopped_by_owner || t.status === "ended") return true;    *)
+(* and the loop then computes `first` from that fresh row.                 *)
+\* code: src/agent/workers.ts:125-130 (session 76-112)
 SessionStart(V, r) ==
     /\ up /\ ~Micro
     /\ r \in runs /\ r.ph = "starting"
     /\ modelOk
-    /\ IF V.recheckAfterSession /\ status[r.tk] = "ended" /\ stopped[r.tk]
-       THEN \* FIX W1: re-read the ticket; the owner stopped it while the session was built
-            /\ stage' = stage /\ lastRep' = lastRep /\ inputs' = inputs /\ hist' = hist
-            /\ runs' = (runs \ {r}) \cup {[r EXCEPT !.ph = "ending"]}
-       ELSE LoopStep(V, r, 0, inputs, stage, lastRep)
+    /\ LET t  == r.tk
+           r1 == [r EXCEPT !.fresh = IF V.recheckAfterSession THEN ~lastRep[t] ELSE r.fresh,
+                           !.onDisk = sessFile[t] \/ V.fileBeforePrompt]
+       IN IF V.recheckAfterSession /\ (stopped[t] \/ status[t] = "ended")
+          THEN /\ stage' = stage /\ lastRep' = lastRep /\ inputs' = inputs /\ hist' = hist
+               /\ runs' = (runs \ {r}) \cup {[r1 EXCEPT !.ph = "ending"]}
+          ELSE LoopStep(V, r1, 0, inputs, stage, lastRep, runs \ {r}, hist)
+    /\ cooling' = [cooling EXCEPT ![r.tk] = FALSE]
     /\ sessFile' = IF V.fileBeforePrompt THEN [sessFile EXCEPT ![r.tk] = TRUE] ELSE sessFile
     /\ pumped' = FALSE
-    /\ UNCHANGED <<status, stopped, added, up, crashes, modelOk, flips>>
+    /\ UNCHANGED <<status, stopped, added, cut, up, crashes, modelOk, flips>>
 
 (* buildSession throws (no model with credentials for "worker"):           *)
-(*   report(t.id, 'failed', 'Could not start a worker: ...'); return;      *)
-\* code: src/agent/workers.ts:93-96; src/agent/sessions.ts:68-72 buildSession throws
-SessionFail(r) ==
+(*   failedStart.set(t0.id, now); report(t0.id, 'failed', ...);            *)
+(*   return false;          -> pump's continuation does not re-pump        *)
+\* code: src/agent/workers.ts:118-124; src/agent/sessions.ts:73 buildSession throws
+SessionFail(V, r) ==
     /\ up
     /\ r \in runs /\ r.ph = "starting"
     /\ ~modelOk
     /\ lastRep' = [lastRep EXCEPT ![r.tk] = TRUE]
     /\ stage' = [stage EXCEPT ![r.tk] = "failed"]
-    /\ runs' = (runs \ {r}) \cup {[r EXCEPT !.ph = "ending", !.failedStart = TRUE]}
+    /\ cooling' = [cooling EXCEPT ![r.tk] = TRUE]
+    /\ runs' = (runs \ {r}) \cup {[r EXCEPT !.ph = "ending", !.noPump = ~V.pumpAfterFailedStart]}
     /\ pumped' = FALSE
-    /\ UNCHANGED <<status, stopped, sessFile, inputs, added, up, crashes, modelOk, flips, hist>>
+    /\ UNCHANGED <<status, stopped, sessFile, inputs, added, cut, up, crashes, modelOk, flips, hist>>
 
 (* The worker calls a tool during its turn (tools.ts workerTools):         *)
 (*   report ready|dropped -> stage done, status ended; blocked -> blocked; *)
 (*   failed -> failed; progress -> working; ask_owner -> stage 'answer'.   *)
 (* Tickets.report does not look at stopped_by_owner.                       *)
-\* code: src/agent/tools.ts:287-308 report, 311-333 ask_owner; src/core/tickets.ts:151-170 report, 142-144 setStage
+\* code: src/agent/tools.ts:290-314 report, 314-340 ask_owner; src/core/tickets.ts:164-184 report, 155-157 setStage
 WorkerTool(V, r, kind) ==
     /\ up /\ ~Micro
     /\ r \in runs /\ r.ph = "prompting"
     /\ LET t == r.tk IN
        CASE kind = "ready" /\ V.reportKeepsOpen /\ HasPendingIn(t, inputs) ->
-              \* FIX W2: ends = (ready || dropped) && !hasPendingInputs(id): stage 'review', open
+              \* W2: ends = (ready || dropped) && !hasPendingInputs(id): stage 'review', open
               /\ lastRep' = [lastRep EXCEPT ![t] = TRUE]
               /\ stage' = [stage EXCEPT ![t] = "review"]
               /\ status' = status
@@ -332,44 +362,83 @@ WorkerTool(V, r, kind) ==
               /\ status' = status
     /\ runs' = (runs \ {r}) \cup {[r EXCEPT !.rep = IF kind = "ask" THEN r.rep ELSE kind # "progress"]}
     /\ pumped' = FALSE
-    /\ UNCHANGED <<stopped, sessFile, inputs, added, up, crashes, modelOk, flips, hist>>
+    /\ UNCHANGED <<stopped, sessFile, inputs, added, cooling, cut, up, crashes, modelOk, flips, hist>>
 
+(***************************************************************************)
 (* `await promptWithFallback(...)` returns (a macrotask: the model replied,*)
 (* or the turn timer aborted it):                                          *)
-(*   "timeout": if (timedOut) { report 'failed'; return }  -- BEFORE        *)
-(*              setSessionFile, so a first turn leaves session_file NULL    *)
-(*   "error":   setSessionFile; if (r.error) { report 'failed'; notify;     *)
-(*              return }                                                    *)
-(*   "ok":      setSessionFile; (pause is not modelled) next turn           *)
-\* code: src/agent/workers.ts:111-122
+(*   persisted = session.sessionFile && existsSync(session.sessionFile)    *)
+(*   if (persisted) setSessionFile(...)                                    *)
+(*   "ok":  cutTurns.delete(t.id); (pause is not modelled) next turn       *)
+(*   "error" | "timeout" (a cut turn):                                     *)
+(*     fails = cutTurns + 1;                                               *)
+(*     if (!persisted && fails <= 2) for (i of inputs) addInput(...)       *)
+(*     failedStart.set(t.id, now); report 'failed' (+ notify on error);    *)
+(*     return false     -> no re-pump; the 15 s timer retries after 60 s   *)
+(* pi writes the session file when the prompt's user message is appended:  *)
+(* a prompt that fails before that (no API key, auth check failed) leaves  *)
+(* no file, so `persisted` of a cut turn is either value (`d`).            *)
+(***************************************************************************)
+\* code: src/agent/workers.ts:144-164; src/core/tickets.ts:202-218 addInput
 PromptReturn(V, r, out) ==
     /\ up /\ ~Micro
     /\ r \in runs /\ r.ph = "prompting"
     /\ LET t == r.tk IN
        IF out = "ok"
        THEN /\ sessFile' = [sessFile EXCEPT ![t] = TRUE]
-            /\ LoopStep(V, r, r.turn + 1, inputs, stage, lastRep)
-       ELSE /\ sessFile' = IF out = "error" THEN [sessFile EXCEPT ![t] = TRUE] ELSE sessFile
-            \* After a timeout the next run builds a new session (session_file NULL):
-            \* the rows this turn took never reach a session that is reopened.
-            /\ inputs' = IF out = "timeout" /\ r.taken /\ ~sessFile[t]
-                         THEN [inputs EXCEPT !.lost = TRUE] ELSE inputs
+            /\ cut' = [cut EXCEPT ![t] = 0]
+            /\ cooling' = cooling
+            /\ status' = status
+            \* a clean turn: cutTurns.delete(t.id)
+            /\ LoopStep(V, [r EXCEPT !.onDisk = TRUE], r.turn + 1, inputs, stage, lastRep, runs \ {r},
+                        [hist EXCEPT !.readds[t] = 0])
+       ELSE \E d \in BOOLEAN :
+            LET persisted == r.onDisk \/ d
+                fails     == IF cut[t] < 3 THEN cut[t] + 1 ELSE 3
+                took      == r.tOwn \/ r.tOth
+                readd     == V.readd /\ ~persisted /\ took /\ (fails <= 2 \/ ~V.readdCap)
+                accepted  == readd /\ ~(V.checkStopped /\ stopped[t])
+                \* addInput for each taken row: an ended ticket reopens (its stage is then
+                \* overwritten by report('failed'))
+                sts1 == IF accepted /\ status[t] = "ended" THEN [status EXCEPT ![t] = "open"] ELSE status
+                dropped == ~persisted /\ took /\ ~readd /\ ~stopped[t]
+            IN
+            /\ sessFile' = IF persisted THEN [sessFile EXCEPT ![t] = TRUE] ELSE sessFile
+            /\ cut' = [cut EXCEPT ![t] = fails]
+            /\ cooling' = [cooling EXCEPT ![t] = TRUE]
+            /\ status' = sts1
+            /\ inputs' = [inputs EXCEPT !.own[t] = @ \/ (accepted /\ r.tOwn),
+                                         !.oth[t] = @ \/ (accepted /\ r.tOth),
+                                         !.dropNotified = @ \/ (dropped /\ fails > 2),
+                                         !.droppedEarly = @ \/ (dropped /\ fails <= 2)]
             /\ lastRep' = [lastRep EXCEPT ![t] = TRUE]
-            /\ stage' = [stage EXCEPT ![t] = "failed"]
-            /\ runs' = (runs \ {r}) \cup {[r EXCEPT !.ph = "ending", !.taken = FALSE]}
-            /\ hist' = hist
+            /\ stage' = [stage EXCEPT ![t] = "failed"]      \* report 'failed' comes after addInput
+            /\ runs' = (runs \ {r}) \cup {[r EXCEPT !.ph = "ending", !.tOwn = FALSE, !.tOth = FALSE,
+                                                     !.noPump = ~V.pumpAfterFailedStart]}
+            /\ hist' = [hist EXCEPT !.readds[t] = IF readd /\ @ < 3 THEN @ + 1 ELSE @]
     /\ pumped' = FALSE
-    /\ UNCHANGED <<status, stopped, added, up, crashes, modelOk, flips>>
+    /\ UNCHANGED <<stopped, added, up, crashes, modelOk, flips>>
 
-(* run(t).finally(() => { running.delete(t.id); dispose(t.id); pump(); })  *)
-\* code: src/agent/workers.ts:48-52
+(* pump()'s continuation of run(t):                                      *)
+(*   .then((started) => { running.delete(t.id); dispose(t.id);             *)
+(*                        if (started) this.pump(); })                     *)
+\* code: src/agent/workers.ts:55-71
 Finally(V, r) ==
     /\ up
     /\ r \in runs /\ r.ph = "ending"
-    /\ IF V.pumpAfterFailedStart \/ ~r.failedStart
+    /\ IF ~r.noPump
        THEN Pump(V, runs \ {r}, status, stage, inputs, hist)
        ELSE /\ runs' = runs \ {r} /\ stage' = stage /\ pumped' = FALSE /\ hist' = hist
-    /\ UNCHANGED <<status, stopped, lastRep, sessFile, inputs, added, up, crashes, modelOk, flips>>
+    /\ UNCHANGED <<status, stopped, lastRep, sessFile, inputs, added, cooling, cut, up, crashes, modelOk, flips>>
+
+(* 60 s pass: failedStart no longer makes pump skip the ticket.            *)
+\* code: src/agent/workers.ts:48 (failedStart > now - 60_000)
+MinutePasses(t) ==
+    /\ up /\ ~Micro
+    /\ cooling[t]
+    /\ cooling' = [cooling EXCEPT ![t] = FALSE]
+    /\ pumped' = FALSE
+    /\ UNCHANGED <<status, stage, stopped, lastRep, sessFile, inputs, added, runs, cut, up, crashes, modelOk, flips, hist>>
 
 (* The process dies. A turn in flight is cut: its inputs were marked       *)
 (* delivered. The session reopened on restart (tickets.session_file) holds *)
@@ -381,15 +450,19 @@ Crash ==
     /\ up' = FALSE
     /\ crashes' = crashes + 1
     /\ runs' = {}
-    \* rows of a turn in flight: kept if the session file is reopened, else lost
-    /\ inputs' = [inputs EXCEPT !.lost = @ \/ \E r \in runs : r.taken /\ ~sessFile[r.tk]]
+    /\ cooling' = [t \in Tickets |-> FALSE]     \* failedStart and cutTurns are memory
+    /\ cut' = [t \in Tickets |-> 0]
+    /\ hist' = [hist EXCEPT !.readds = [t \in Tickets |-> 0]]   \* the re-queue count is per process
+    \* rows of a turn in flight: kept if tickets.session_file reopens the session, else lost,
+    \* and nobody is told (the recovery note goes to the worker)
+    /\ inputs' = [inputs EXCEPT !.lost = @ \/ \E r \in runs : (r.tOwn \/ r.tOth) /\ ~sessFile[r.tk]]
     /\ pumped' = FALSE
-    /\ UNCHANGED <<status, stage, stopped, lastRep, sessFile, added, modelOk, flips, hist>>
+    /\ UNCHANGED <<status, stage, stopped, lastRep, sessFile, added, modelOk, flips>>
 
 (* Daemon.start -> WorkerPool.recover(): each open ticket at stage         *)
 (* 'working' gets addInput('recovery', ...) and setStage('queued'). The    *)
 (* pump() at the end of start() comes later (after awaits): TimerPump.     *)
-\* code: src/daemon.ts:162-165 start -> src/agent/workers.ts:141-154 recover
+\* code: src/daemon.ts:218-225 start -> src/agent/workers.ts:180-193 recover
 Restart ==
     /\ ~up
     /\ up' = TRUE
@@ -397,7 +470,7 @@ Restart ==
        IN /\ inputs' = [inputs EXCEPT !.oth = [t \in Tickets |-> IF t \in Wset THEN TRUE ELSE @[t]]]
           /\ stage' = [t \in Tickets |-> IF t \in Wset THEN "queued" ELSE stage[t]]
     /\ pumped' = FALSE
-    /\ UNCHANGED <<status, stopped, lastRep, sessFile, added, runs, crashes, modelOk, flips, hist>>
+    /\ UNCHANGED <<status, stopped, lastRep, sessFile, added, runs, cooling, cut, crashes, modelOk, flips, hist>>
 
 (* The worker role loses or regains its models (login expires, vigil login).*)
 \* code: src/agent/models.ts pick (credentials appear / disappear)
@@ -407,14 +480,15 @@ ModelFlip ==
     /\ modelOk' = ~modelOk
     /\ flips' = flips + 1
     /\ pumped' = FALSE
-    /\ UNCHANGED <<status, stage, stopped, lastRep, sessFile, inputs, added, runs, up, crashes, hist>>
+    /\ UNCHANGED <<status, stage, stopped, lastRep, sessFile, inputs, added, runs, cooling, cut, up, crashes, hist>>
 
 -----------------------------------------------------------------------------
 \* Named steps (TLC and /statechart label a trace step with these names).
 OwnerOrConciergeWrites(V) == \E t \in Tickets, k \in InputKinds : OwnerMessage(V, t, k)
 OwnerStops                == \E t \in Tickets : Stop(t)
 SessionReady(V)           == \E r \in runs : SessionStart(V, r)
-SessionThrows             == \E r \in runs : SessionFail(r)
+SessionThrows(V)          == \E r \in runs : SessionFail(V, r)
+AMinutePasses             == \E t \in Tickets : MinutePasses(t)
 WorkerCallsTool(V)        == \E r \in runs, k \in ToolKinds : WorkerTool(V, r, k)
 TurnReturns(V)            == \E r \in runs, out \in Outcomes : PromptReturn(V, r, out)
 RunSettles(V)             == \E r \in runs : Finally(V, r)
@@ -424,7 +498,8 @@ NextWith(V) ==
     \/ OwnerOrConciergeWrites(V)
     \/ OwnerStops
     \/ SessionReady(V)
-    \/ SessionThrows
+    \/ SessionThrows(V)
+    \/ AMinutePasses
     \/ WorkerCallsTool(V)
     \/ TurnReturns(V)
     \/ RunSettles(V)
@@ -437,7 +512,8 @@ FairWith(V) ==
     /\ WF_vars(Restart)
     /\ \A t \in Tickets :
         /\ WF_vars(\E r \in runs : r.tk = t /\ SessionStart(V, r))
-        /\ WF_vars(\E r \in runs : r.tk = t /\ SessionFail(r))
+        /\ WF_vars(\E r \in runs : r.tk = t /\ SessionFail(V, r))
+        /\ WF_vars(MinutePasses(t))
         /\ WF_vars(\E r \in runs, out \in Outcomes : r.tk = t /\ PromptReturn(V, r, out))
         /\ WF_vars(\E r \in runs : r.tk = t /\ Finally(V, r))
 
@@ -446,16 +522,9 @@ SpecWith(V) == Init /\ [][NextWith(V)]_vars /\ FairWith(V)
 Next == NextWith(Base)
 Spec == SpecWith(Base)
 
-\* Every fix of the SKILL's findings at once (fixes/FixAll.cfg).
-Fixed == [Base EXCEPT !.recheckAfterSession = TRUE, !.pumpAfterFailedStart = FALSE,
-                      !.fileBeforePrompt = TRUE, !.reportKeepsOpen = TRUE]
+\* The suggested fix for the open finding W3c (fixes/FixW3c.cfg).
+Fixed == [Base EXCEPT !.fileBeforePrompt = TRUE]
 SpecFixed == SpecWith(Fixed)
-
-\* Each fix alone, against its finding's config.
-SpecFixW1 == SpecWith([Base EXCEPT !.recheckAfterSession = TRUE])
-SpecFixW2 == SpecWith([Base EXCEPT !.reportKeepsOpen = TRUE])
-SpecFixW3 == SpecWith([Base EXCEPT !.fileBeforePrompt = TRUE])
-SpecFixW4 == SpecWith([Base EXCEPT !.pumpAfterFailedStart = FALSE])
 
 -----------------------------------------------------------------------------
 (***************************************************************************)
@@ -479,10 +548,11 @@ SlotLimit ==
     \/ Cardinality(runs) <= MAX
     \/ Cardinality(runs) = MAX + 1 /\ \E r \in runs : r.owner
 
-\* Right after a pump, a ticket with owner input waits only if all max+1 slots are taken.
+\* Right after a pump, a ticket with owner input waits only if all max+1 slots are taken
+\* or its worker failed to start, or its turn was cut, less than a minute ago (since 166ea0c).
 ReservedSlotWorks ==
     pumped => \A t \in Tickets :
-        (Runnable(t) /\ OwnerWaiting(t) /\ ~Running(t)) => Cardinality(runs) >= MAX + 1
+        (Runnable(t) /\ OwnerWaiting(t) /\ ~Running(t) /\ ~cooling[t]) => Cardinality(runs) >= MAX + 1
 
 \* CHARACTERISATION (expected to fail): right after a pump, every ticket with owner input runs.
 SecondOwnerNeverWaits ==
@@ -504,14 +574,25 @@ StoppedStaysStopped == StoppedRejectsInputs /\ StoppedNeverRunsAgain
 OwnerNeverStarved ==
     \A t \in Tickets : inputs.own[t] ~> ~inputs.own[t]
 
-\* Every input reaches a turn that returns (or the session reopened after a
-\* crash), unless the owner stopped the ticket: none is ever lost, and none
-\* stays pending for ever.
-InputNeverLost == ~inputs.lost
+\* An input marked delivered reaches a turn that returns, or a session file
+\* that is reopened. Split by how it can fail:
+\*   InputNeverLostSilently: never dropped without the owner hearing of it (a crash)
+\*   InputKeptForTwoCuts:    never dropped before two re-queues
+\*   InputNeverLost:         never dropped at all (the strict promise)
+InputNeverLostSilently == ~inputs.lost
+InputKeptForTwoCuts    == ~inputs.droppedEarly
+InputNeverLost         == ~inputs.lost /\ ~inputs.dropNotified /\ ~inputs.droppedEarly
 
-NoInputLost ==
-    /\ []InputNeverLost
-    /\ \A t \in Tickets : HasPendingIn(t, inputs) ~> ~HasPendingIn(t, inputs)
+\* Liveness: no input stays pending for ever.
+NoInputStuck == \A t \in Tickets : HasPendingIn(t, inputs) ~> ~HasPendingIn(t, inputs)
+
+NoInputLost == []InputNeverLost /\ NoInputStuck
+
+\* A cut turn's inputs are re-queued at most twice in a row (4e2683a).
+RetriesBounded == \A t \in Tickets : hist.readds[t] <= 2
+
+\* No run starts within a minute of the ticket's failed start or cut turn.
+RetryBackoff == ~hist.startedCooling
 
 \* Liveness: the event loop keeps getting back to timers and I/O.
 EventLoopProgress == []<>(~Micro)
