@@ -28,7 +28,7 @@ const USAGE = `vigil — an always-on personal agent on pi
   vigil login opencode       store an OpenCode Go API key
   vigil models               which models each role would use
   vigil start                run the daemon in the foreground
-  vigil chat                 talk to vigil in this terminal (when the service is not running)
+  vigil chat                 talk to vigil in this terminal (attaches to the service if it runs)
   vigil status               what is going on (reads the database)
   vigil doctor               check the setup
   vigil simulate [--max N] [--gap MIN] [--quiet HH:MM-HH:MM] [--synthetic]
@@ -268,6 +268,35 @@ async function start(p: Paths, opts: { cli: boolean }): Promise<Daemon> {
 	return daemon;
 }
 
+/** With the service running, `vigil chat` talks to it over the local HTTP API instead. */
+async function attachChat(p: Paths): Promise<void> {
+	const cfg = loadConfig(p);
+	const http = cfg.channels.http;
+	if (!http?.token) throw new Error("vigil is already running and has no HTTP token configured, so chat cannot attach to it. Stop the service or set channels.http.token.");
+	console.log(`attached to the running vigil on 127.0.0.1:${http.port}. Ctrl-D to leave.`);
+	const rl = lineReader();
+	for (;;) {
+		const text = (await rl.question("> ")).trim();
+		if (!text) {
+			if (process.stdin.readableEnded) break;
+			continue;
+		}
+		try {
+			const res = await fetch(`http://127.0.0.1:${http.port}/api/message`, {
+				method: "POST",
+				headers: { authorization: `Bearer ${http.token}`, "content-type": "application/json" },
+				body: JSON.stringify({ text }),
+				signal: AbortSignal.timeout(130_000),
+			});
+			const body = (await res.json()) as { reply?: string; error?: string };
+			console.log(body.reply ?? `(${body.error ?? res.status})`);
+		} catch (err) {
+			console.log(`(could not reach vigil: ${(err as Error).message})`);
+		}
+	}
+	rl.close();
+}
+
 function simulateCmd(p: Paths, argv: string[]): void {
 	const cfg = existsSync(p.config) ? loadConfig(p) : defaultConfig();
 	const flag = (name: string) => {
@@ -344,7 +373,12 @@ async function main(): Promise<void> {
 			await start(p, { cli: false });
 			return;
 		case "chat":
-			await start(p, { cli: true });
+			try {
+				await start(p, { cli: true });
+			} catch (err) {
+				if (!/already running/.test((err as Error).message)) throw err;
+				await attachChat(p);
+			}
 			return;
 		case "status":
 			return status(p);
