@@ -174,7 +174,7 @@ useful phrasings:
 - "every weekday at 8:30, look at my calendar and GitHub and give me a 3-line brief"
 - "watch https://… and tell me when the deadline changes"
 - "remember that I prefer aisle seats"
-- "stop pinging me about CI" (mutes the topic), or react 🔕 to a notice
+- "stop pinging me about CI" (mutes the topic), or react 😴 to a notice
 - Reply to a worker's message to continue that task. Reply to a question to answer it.
 
 | Command | |

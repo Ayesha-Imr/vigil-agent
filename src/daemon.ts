@@ -561,11 +561,12 @@ export class Daemon {
 		const ref = msg.replyTo ? s.outbox.lookupRef(msg.channel, msg.replyTo) : undefined;
 		if (!ref || ref.kind !== "notice") return "reaction ignored";
 		const emoji = msg.data ?? "";
-		if (/👎|😒|🙄|💩/.test(emoji)) {
+		if (/👎|😒|🙄|💩|🤮/.test(emoji)) {
 			const topic = s.notifier.dislike(ref.id);
 			return topic ? `disliked ${topic}` : "dislike: unknown notice";
 		}
-		if (/🔕|🔇|🤫|🙊/.test(emoji)) {
+		// Telegram allows only a fixed set of reactions (no 🔕), so 😴 is the main one; others for other apps.
+		if (/😴|🥱|🙈|🙉|🙊|🔕|🔇|🤫/.test(emoji)) {
 			const topic = s.notifier.topicOf(ref.id);
 			if (topic) s.notifier.mute(topic, DAY);
 			return topic ? `muted ${topic} for a day` : "mute: unknown notice";
@@ -756,7 +757,7 @@ const HELP = `vigil commands
 /pause · /resume — stop and restart everything new
 /new — fresh conversation (memory is kept)
 /login codex · /login opencode <key>
-Anything else is a message to vigil. Reply to one of its messages to talk about that thing. React 👎 to a notice to hear less of that topic, 🔕 to mute it for a day.`;
+Anything else is a message to vigil. Reply to one of its messages to talk about that thing. React 👎 to a notice to hear less of that topic, 😴 to mute it for a day.`;
 
 function gitCommit(dir: string, message: string): Promise<void> {
 	const git = (args: string[]) =>

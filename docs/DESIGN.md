@@ -114,7 +114,7 @@ out as **one** message; when the owner writes to vigil, pending digest items are
 concierge to mention in its reply, and are then marked delivered. Every item ends in exactly one
 of: delivered alone, delivered in a digest, dropped (with reason), expired (past its `expiresAt`).
 
-Feedback: an owner can mute a topic (`/mute topic 1d`, a 🔕 reaction, or by saying so; the agent has
+Feedback: an owner can mute a topic (`/mute topic 1d`, a 😴 reaction, or by saying so; the agent has
 a `mute_topic` tool). A 👎 reaction on a notification lowers that topic's urgency for 7 days.
 
 Invariants the model checker verifies (see `verification/`):

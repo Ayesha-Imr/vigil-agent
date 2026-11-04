@@ -253,7 +253,7 @@ export function conciergeTools(s: Services, hooks: ConciergeToolHooks): ToolDefi
 		defineTool({
 			name: "mute_topic",
 			label: "Mute topic",
-			description: "Stop notices on a topic for a while, because the owner asked or reacted with 🔕.",
+			description: "Stop notices on a topic for a while, because the owner asked or reacted with 😴.",
 			parameters: Type.Object({ topic: Type.String(), hours: Type.Number() }),
 			async execute(_id, p) {
 				s.notifier.mute(p.topic, p.hours * HOUR);
