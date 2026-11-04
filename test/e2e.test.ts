@@ -417,4 +417,20 @@ describe("vigil end to end", () => {
 		expect(waiting[0].text).toContain("daily 8:30 check");
 		expect(h.channel.sent.length).toBe(0); // low urgency: it waits for the digest
 	});
+
+	it("puts an off switch on every interruption, and the mute holds", async () => {
+		h = await harness(() => say("?"), (c) => {
+			c.attention.quietHours = null;
+			c.attention.minGapMinutes = 0;
+		});
+		h.daemon.s.notifier.notify({ urgency: "high", topic: "ci", text: "CI is red on main." });
+		await h.daemon.s.outbox.deliverDue();
+		const sent = h.channel.sent[0];
+		expect(sent.buttons?.[0].map((b) => b.label)).toEqual(["🔕 Mute 1 day", "👎 Less like this"]);
+		await h.channel.receive("", { kind: "button", data: sent.buttons![0][0].data });
+		await h.settle();
+		expect(h.channel.texts().at(-1)).toContain('Muted "ci"');
+		const again = h.daemon.s.notifier.notify({ urgency: "high", topic: "ci", text: "CI is still red." });
+		expect(again.decision).toBe("drop:muted");
+	});
 });

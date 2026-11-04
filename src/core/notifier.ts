@@ -157,7 +157,12 @@ export class Notifier {
 			this.db.event("notice.unroutable", "no owner channel is configured; notice kept in the panel only");
 			return;
 		}
-		this.outbox.enqueue({ ...route, text: critical ? `🚨 ${text}` : text, ref });
+		// An interruption comes with its own off switch; digests (many topics) do not.
+		const buttons =
+			ref.kind === "notice"
+				? [[{ data: `mute:${ref.id}`, label: "🔕 Mute 1 day" }, { data: `less:${ref.id}`, label: "👎 Less like this" }]]
+				: undefined;
+		this.outbox.enqueue({ ...route, text: critical ? `🚨 ${text}` : text, ref, buttons });
 	}
 
 	private commit(state: GovernorState): void {

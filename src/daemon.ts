@@ -556,6 +556,21 @@ export class Daemon {
 			say(`→ ${choice}`);
 			return `answered ${id}`;
 		}
+		if (kind === "mute" || kind === "less") {
+			const topic = s.notifier.topicOf(id);
+			if (!topic) {
+				say("That notice is too old to act on.");
+				return `${kind}: unknown notice`;
+			}
+			if (kind === "mute") {
+				s.notifier.mute(topic, DAY);
+				say(`Muted "${topic}" for a day. /unmute ${topic} to undo.`);
+			} else {
+				s.notifier.dislike(id);
+				say(`Got it: fewer "${topic}" notices this week.`);
+			}
+			return `${kind} ${topic}`;
+		}
 		return `unknown button ${data}`;
 	}
 
