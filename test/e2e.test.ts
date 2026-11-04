@@ -382,4 +382,15 @@ describe("vigil end to end", () => {
 		await h.settle();
 		expect(h.channel.texts().at(-1)).toBe("TAP, $438.");
 	});
+
+	it("sends the result of a ticket started over HTTP to the owner's chat", async () => {
+		h = await harness((ctx) => {
+			if (isConcierge(ctx)) return ctx.lastToolResult ? say("Started.") : call("spawn_ticket", { title: "From a shortcut", request: "do it", scope: "x" });
+			if (isWorker(ctx)) return ctx.lastToolResult ? say("x") : call("report", { kind: "ready", summary: "Done from the shortcut." });
+			return say("?");
+		});
+		await h.daemon.onInbound({ channel: "http", externalId: "http:req1", senderId: "owner", conversation: "http", kind: "message", text: "do it", at: Date.now() });
+		await h.settle();
+		expect(h.channel.texts().some((t) => t.includes("Done from the shortcut."))).toBe(true);
+	});
 });
