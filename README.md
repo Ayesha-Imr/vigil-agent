@@ -341,7 +341,8 @@ verification skills, so they can do the same for your code.
     "quietHours": { "start": "22:30", "end": "08:00" },
     "digestTimes": ["09:00", "18:00"],
     "maxInterruptsPerDay": 3, "minGapMinutes": 60, "criticalPerDay": 3,
-    "dedupWindowMinutes": 720, "defaultExpiryHours": 36
+    "dedupWindowMinutes": 720, "defaultExpiryHours": 36,
+    "silentDigests": true                             // digests arrive without a buzz
   },
   "proactive": { "mode": "observe", "heartbeatMinutes": 60, "dreamAt": "04:00" },
   "workers": { "max": 2 },

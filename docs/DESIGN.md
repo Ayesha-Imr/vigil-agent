@@ -109,7 +109,8 @@ Rules, in order:
    `minGapMinutes` since the last interrupt) → `deliver`.
 7. Otherwise → `digest`.
 
-Digest flush: at each configured digest time (outside quiet hours) all held and digested items go
+Digests arrive silently (no sound or vibration) unless `attention.silentDigests` is false. Digest
+flush: at each configured digest time (outside quiet hours) all held and digested items go
 out as **one** message; when the owner writes to vigil, pending digest items are offered to the
 concierge to mention in its reply, and are then marked delivered. Every item ends in exactly one
 of: delivered alone, delivered in a digest, dropped (with reason), expired (past its `expiresAt`).
