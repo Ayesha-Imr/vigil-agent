@@ -2,7 +2,7 @@
 // gate, and runs the loops (outbox, governor, scheduler, watchers, workers).
 
 import { execFile } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
@@ -118,6 +118,33 @@ export class Daemon {
 			skillsDir: shippedSkillsDir(),
 			paused: () => db.getKv<boolean>("paused") === true,
 			wakeWorkers: () => {},
+			fetchAttachments: async (channel, attachments, acceptsImages) => {
+				const ch = o.channels.get(channel);
+				const images: { type: "image"; data: string; mimeType: string }[] = [];
+				const notes: string[] = [];
+				if (!attachments.length) return { images, notes };
+				const dir = join(o.paths.home, "inbox", localDate(clock.now(), cfg.owner.timezone));
+				mkdirSync(dir, { recursive: true });
+				for (const [i, a] of attachments.entries()) {
+					if (!ch?.download) {
+						notes.push(`[${a.kind} attached, but this channel cannot download it]`);
+						continue;
+					}
+					try {
+						const file = await ch.download(a);
+						const ext = a.name?.match(/\.[A-Za-z0-9]{1,8}$/)?.[0] ?? (file.mimeType.includes("jpeg") ? ".jpg" : file.mimeType.includes("png") ? ".png" : file.mimeType.includes("ogg") ? ".ogg" : ".bin");
+						const base = (a.name ?? `${a.kind}-${clock.now()}-${i}`).replace(/[^\w.-]+/g, "_").replace(/\.[A-Za-z0-9]{1,8}$/, "");
+						const path = join(dir, `${base}${ext}`);
+						writeFileSync(path, file.data);
+						const isImage = file.mimeType.startsWith("image/");
+						if (isImage && acceptsImages && file.data.length < 8_000_000) images.push({ type: "image", data: file.data.toString("base64"), mimeType: file.mimeType });
+						notes.push(`[${a.kind} saved at ${path}${isImage && acceptsImages ? ", and shown to you above" : ""}]`);
+					} catch (err) {
+						notes.push(`[${a.kind} attached, download failed: ${(err as Error).message}]`);
+					}
+				}
+				return { images, notes };
+			},
 			typing: async (channel, conversation) => {
 				await o.channels.get(channel)?.typing?.(conversation).catch(() => {});
 			},
@@ -403,7 +430,7 @@ export class Daemon {
 		const context = ref?.kind === "notice" || ref?.kind === "digest" ? this.refText(msg) : "";
 		// Stays 'processing' until the concierge has answered, so a crash in between replays it.
 		done("processing", "to concierge");
-		this.concierge.enqueue({ kind: "owner", channel: msg.channel, conversation: msg.conversation, externalId: msg.externalId, text: context + text, at: msg.at, triggerIds: [triggerId] });
+		this.concierge.enqueue({ kind: "owner", channel: msg.channel, conversation: msg.conversation, externalId: msg.externalId, text: context + text, at: msg.at, triggerIds: [triggerId], attachments: msg.attachments });
 	}
 
 	private refText(msg: InboundMessage): string {

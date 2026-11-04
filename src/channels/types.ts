@@ -23,7 +23,17 @@ export interface InboundMessage {
 	replyTo?: string;
 	/** Button data for kind=button; the emoji for kind=reaction. */
 	data?: string;
+	/** Files sent with the message, fetched on demand with Channel.download(). */
+	attachments?: Attachment[];
 	at: number;
+}
+
+export interface Attachment {
+	kind: "photo" | "document" | "voice" | "video";
+	/** Channel-specific handle for download(). */
+	ref: string;
+	name?: string;
+	mimeType?: string;
 }
 
 export interface OutboundMessage {
@@ -48,6 +58,8 @@ export interface Channel {
 	/** Start listening. Resolves once connected. */
 	start(onInbound: (msg: InboundMessage) => Promise<void>): Promise<void>;
 	send(msg: OutboundMessage): Promise<SendResult>;
+	/** Fetch an attachment's bytes. */
+	download?(attachment: Attachment): Promise<{ data: Buffer; mimeType: string }>;
 	/** Show a short-lived "typing…" indicator, where the app has one. */
 	typing?(conversation: string): Promise<void>;
 	/** The conversation to use for proactive messages to the owner, if known. */

@@ -13,6 +13,8 @@ import { Daemon } from "../../src/daemon.ts";
 
 export { fauxAssistantMessage, fauxToolCall };
 
+const TINY_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
 export class FakeChannel implements Channel {
 	readonly id = "telegram" as const;
 	sent: (OutboundMessage & { externalId: string })[] = [];
@@ -30,6 +32,10 @@ export class FakeChannel implements Channel {
 		return "42";
 	}
 	async stop(): Promise<void> {}
+	async download(a: { ref: string; mimeType?: string }): Promise<{ data: Buffer; mimeType: string }> {
+		if (a.ref === "png") return { data: Buffer.from(TINY_PNG, "base64"), mimeType: "image/png" };
+		return { data: Buffer.from(`bytes of ${a.ref}`), mimeType: a.mimeType ?? "application/octet-stream" };
+	}
 	async receive(text: string, opts: Partial<InboundMessage> = {}): Promise<void> {
 		this.seq++;
 		await this.onInbound!({
@@ -108,7 +114,7 @@ export async function harness(brain: Brain, tweak: (cfg: VigilConfig) => void = 
 		baseUrl: "http://faux.invalid",
 		apiKey: "faux-key",
 		api: faux.api,
-		models: faux.models.map((m) => ({ id: m.id, name: m.name, api: m.api, reasoning: false, input: ["text"], cost: m.cost, contextWindow: 200_000, maxTokens: 4000 })),
+		models: faux.models.map((m) => ({ id: m.id, name: m.name, api: m.api, reasoning: false, input: ["text", "image"], cost: m.cost, contextWindow: 200_000, maxTokens: 4000 })),
 	} as never);
 
 	const clock = new ManualClock(Date.UTC(2026, 10, 4, 12, 0, 0));

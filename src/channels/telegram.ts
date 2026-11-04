@@ -4,7 +4,7 @@
 import { Bot, GrammyError, HttpError } from "grammy";
 import type { CallbackQuery, InlineKeyboardButton, Message, MessageReactionUpdated, ReactionType } from "grammy/types";
 import type { ChannelId } from "../config.ts";
-import { type Channel, type InboundMessage, type OutboundMessage, PermanentSendError, type SendResult } from "./types.ts";
+import { type Attachment, type Channel, type InboundMessage, type OutboundMessage, PermanentSendError, type SendResult } from "./types.ts";
 import { errorText, type Log, settleWithin, stderrLog, truncate } from "./util.ts";
 
 const ID: ChannelId = "telegram";
@@ -29,12 +29,14 @@ export interface TelegramOptions {
 export class TelegramChannel implements Channel {
 	readonly id = ID;
 	private readonly bot: Bot;
+	private readonly token: string;
 	private readonly ownerUserId: string | undefined;
 	private readonly log: Log;
 	private polling: Promise<void> | undefined;
 
 	constructor(opts: TelegramOptions) {
 		this.bot = new Bot(opts.token);
+		this.token = opts.token;
 		this.ownerUserId = opts.ownerUserId;
 		this.log = opts.log ?? stderrLog;
 	}
@@ -74,6 +76,15 @@ export class TelegramChannel implements Channel {
 					reject(err);
 				});
 		});
+	}
+
+	/** Download a file the owner sent (Bot API files are limited to 20 MB). */
+	async download(attachment: Attachment): Promise<{ data: Buffer; mimeType: string }> {
+		const file = await this.bot.api.getFile(attachment.ref);
+		if (!file.file_path) throw new Error("telegram returned no file path");
+		const res = await fetch(`https://api.telegram.org/file/bot${this.token}/${file.file_path}`, { signal: AbortSignal.timeout(60_000) });
+		if (!res.ok) throw new Error(`telegram file download: HTTP ${res.status}`);
+		return { data: Buffer.from(await res.arrayBuffer()), mimeType: attachment.mimeType ?? "application/octet-stream" };
 	}
 
 	/** Telegram shows "typing…" for about five seconds per call. */
@@ -170,6 +181,10 @@ export function fromMessage(m: Message): InboundMessage | undefined {
 	if (m.location) parts.push(`[location ${m.location.latitude},${m.location.longitude}]`);
 	if (parts.length === 0) return undefined;
 	const chat = m.chat.id;
+	const attachments: Attachment[] = [];
+	if (m.photo?.length) attachments.push({ kind: "photo", ref: m.photo[m.photo.length - 1].file_id, mimeType: "image/jpeg" });
+	if (m.document) attachments.push({ kind: "document", ref: m.document.file_id, name: m.document.file_name, mimeType: m.document.mime_type });
+	if (m.voice) attachments.push({ kind: "voice", ref: m.voice.file_id, mimeType: m.voice.mime_type ?? "audio/ogg" });
 	return {
 		channel: ID,
 		externalId: `${chat}:${m.message_id}`,
@@ -179,6 +194,7 @@ export function fromMessage(m: Message): InboundMessage | undefined {
 		kind: "message",
 		text: parts.join("\n"),
 		replyTo: m.reply_to_message ? `${chat}:${m.reply_to_message.message_id}` : undefined,
+		attachments: attachments.length ? attachments : undefined,
 		at: m.date * 1000,
 	};
 }

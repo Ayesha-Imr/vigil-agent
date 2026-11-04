@@ -1,6 +1,8 @@
 // The services every part of the agent layer reaches: one object, built by the daemon.
 
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { ImageContent } from "@earendil-works/pi-ai";
+import type { Attachment } from "../channels/types.ts";
 import type { ChannelId, Paths, VigilConfig } from "../config.ts";
 import type { Approvals } from "../core/approvals.ts";
 import type { Notifier, OwnerRoute } from "../core/notifier.ts";
@@ -36,6 +38,11 @@ export interface Services {
 	paused: () => boolean;
 	/** Wake the worker pool after something queued work for it. */
 	wakeWorkers: () => void;
+	/**
+	 * Fetch the files of an owner message: images go to the model when it accepts them; every file
+	 * is saved under inbox/ and named in a note so the agent can open it with its tools.
+	 */
+	fetchAttachments: (channel: ChannelId, attachments: Attachment[], acceptsImages: boolean) => Promise<{ images: ImageContent[]; notes: string[] }>;
 	/** Show a typing indicator in a chat, where the channel supports it. Never throws. */
 	typing: (channel: ChannelId, conversation: string) => Promise<void>;
 }

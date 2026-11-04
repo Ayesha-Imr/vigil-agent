@@ -5,6 +5,7 @@
 
 import { join } from "node:path";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { Attachment } from "../channels/types.ts";
 import type { ChannelId } from "../config.ts";
 import type { Origin } from "../core/tickets.ts";
 import { localMinuteOfDay } from "../core/time.ts";
@@ -15,7 +16,7 @@ import { conciergeTools } from "./tools.ts";
 import { webTools } from "./web.ts";
 
 export type ConciergeInput =
-	| { kind: "owner"; channel: ChannelId; conversation: string; externalId: string; text: string; at: number; triggerIds?: number[] }
+	| { kind: "owner"; channel: ChannelId; conversation: string; externalId: string; text: string; at: number; triggerIds?: number[]; attachments?: Attachment[] }
 	| { kind: "system"; tag: string; text: string; done?: (result: string) => void };
 
 const SESSION_KEY = "concierge.session";
@@ -99,13 +100,15 @@ export class Concierge {
 		if (first.kind !== "owner") return first;
 		const parts = [this.tag(first)];
 		const triggerIds = [...(first.triggerIds ?? [])];
+		const attachments = [...(first.attachments ?? [])];
 		let last = first;
 		while (this.queue[0]?.kind === "owner" && (this.queue[0] as typeof first).conversation === first.conversation) {
 			last = this.queue.shift() as typeof first;
 			parts.push(this.tag(last));
 			triggerIds.push(...(last.triggerIds ?? []));
+			attachments.push(...(last.attachments ?? []));
 		}
-		return { ...last, text: parts.join("\n"), triggerIds };
+		return { ...last, text: parts.join("\n"), triggerIds, attachments };
 	}
 
 	private async handle(input: ConciergeInput): Promise<void> {
@@ -132,7 +135,9 @@ export class Concierge {
 				text += `\n\n(While you were away, not yet told to the owner:\n${waiting.map((n) => `- [${n.effective}] ${n.text}`).join("\n")})`;
 			}
 			const typing = this.typing(input.channel, input.conversation);
-			const r = await promptWithFallback(this.s, session, "concierge", text).finally(() => clearInterval(typing));
+			const files = await this.s.fetchAttachments(input.channel, input.attachments ?? [], session.model?.input?.includes("image") ?? false);
+			if (files.notes.length) text += `\n${files.notes.join("\n")}`;
+			const r = await promptWithFallback(this.s, session, "concierge", text, files.images).finally(() => clearInterval(typing));
 			const out = r.error && !r.text ? `Something went wrong on my side (${r.error.slice(0, 200)}). Try again in a bit.` : r.text;
 			if (out && !SILENT.test(out)) this.reply(input, out);
 			this.s.db.setKv(SESSION_KEY, session.sessionFile ?? null);

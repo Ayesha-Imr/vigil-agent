@@ -288,4 +288,18 @@ describe("vigil end to end", () => {
 		expect(h.channel.texts().some((t) => t.includes("A is fast (MIT), B is small (Apache-2.0)."))).toBe(true);
 		expect(h.calls.filter((c) => c.system.includes("You are a helper agent")).length).toBe(2);
 	});
+
+	it("shows a photo from the phone to the model and saves it to the inbox", async () => {
+		let sawImage = false;
+		h = await harness((ctx) => {
+			const last = [...ctx.messages].reverse().find((m) => m.role === "user");
+			sawImage = Array.isArray(last?.content) && (last.content as { type: string }[]).some((c) => c.type === "image");
+			return say(sawImage ? "Nice receipt." : "no image");
+		});
+		await h.channel.receive("what is this?", { attachments: [{ kind: "photo", ref: "png", mimeType: "image/png" }] });
+		await h.settle();
+		expect(sawImage).toBe(true);
+		expect(h.channel.texts()).toEqual(["Nice receipt."]);
+		expect(h.calls[0].lastUser).toMatch(/photo saved at .*inbox/);
+	});
 });

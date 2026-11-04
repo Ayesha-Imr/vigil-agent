@@ -15,6 +15,7 @@ import {
 	SettingsManager,
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import type { ImageContent } from "@earendil-works/pi-ai";
 import type { ModelRole } from "../config.ts";
 import { localDate, localMinuteOfDay } from "../core/time.ts";
 import { approvalGate } from "./gate.ts";
@@ -159,7 +160,7 @@ export interface RunResult {
  * Prompt a session and wait until pi settles; on a provider failure, fall back to the role's next
  * model and ask the session to carry on. The session history keeps the failed turn.
  */
-export async function promptWithFallback(s: Services, session: AgentSession, role: ModelRole, text: string): Promise<RunResult> {
+export async function promptWithFallback(s: Services, session: AgentSession, role: ModelRole, text: string, images?: ImageContent[]): Promise<RunResult> {
 	const tried = new Set<string>();
 	let input = text;
 	for (let attempt = 0; attempt < 4; attempt++) {
@@ -167,7 +168,7 @@ export async function promptWithFallback(s: Services, session: AgentSession, rol
 		if (model) tried.add(key(model));
 		let error: string | undefined;
 		try {
-			await session.prompt(input);
+			await session.prompt(input, attempt === 0 && images?.length ? { images } : undefined);
 			const last = [...session.messages].reverse().find((m) => (m as { role?: string }).role === "assistant") as
 				| { stopReason?: string; errorMessage?: string }
 				| undefined;
