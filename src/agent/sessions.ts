@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
 	type AgentSession,
 	createAgentSession,
+	createBashToolDefinition,
 	createCodemodeExtension,
 	createMcpExtension,
 	createToolSearchExtension,
@@ -19,6 +20,7 @@ import type { ImageContent } from "@earendil-works/pi-ai";
 import type { ModelRole } from "../config.ts";
 import { localDate, localMinuteOfDay } from "../core/time.ts";
 import { approvalGate } from "./gate.ts";
+import { sandboxEnabled, sandboxHook } from "./sandbox.ts";
 import { type AnyModel, key } from "./models.ts";
 import type { Services } from "./services.ts";
 
@@ -133,6 +135,22 @@ export async function buildSession(s: Services, spec: SessionSpec): Promise<Buil
 		compaction: { enabled: true },
 	});
 
+	// With a sandbox, pi's bash runs each command inside bubblewrap; everything else is unchanged.
+	let builtinTools = spec.builtinTools;
+	const customTools = [...spec.customTools];
+	if (builtinTools.includes("bash") && sandboxEnabled(s.cfg.sandbox ?? "auto")) {
+		builtinTools = builtinTools.filter((t) => t !== "bash");
+		customTools.push(
+			createBashToolDefinition(spec.cwd, {
+				spawnHook: sandboxHook({
+					home: s.paths.home,
+					writable: [s.paths.work, "/tmp"],
+					readable: [s.paths.memory, s.paths.skills, join(s.paths.home, "inbox"), s.skillsDir],
+				}),
+			}) as unknown as ToolDefinition,
+		);
+	}
+
 	const { session } = await createAgentSession({
 		cwd: spec.cwd,
 		agentDir: s.paths.agentDir,
@@ -142,8 +160,8 @@ export async function buildSession(s: Services, spec: SessionSpec): Promise<Buil
 		resourceLoader: loader,
 		sessionManager,
 		settingsManager,
-		tools: [...spec.builtinTools, ...spec.customTools.map((t) => t.name)],
-		customTools: spec.customTools,
+		tools: [...builtinTools, ...customTools.map((t) => t.name)],
+		customTools,
 	});
 	// MCP connects on session_start, which only fires once extensions are bound.
 	if (mcp) await session.bindExtensions({});

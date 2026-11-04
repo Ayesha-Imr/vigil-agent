@@ -53,6 +53,11 @@ export interface VigilConfig {
 	approvals: { ttlMinutes: number };
 	/** Web search backend for the web_search tool. */
 	search: SearchConfig;
+	/**
+	 * Run the agent's shell commands in a bubblewrap sandbox: read-only system, vigil's own state and
+	 * SSH/GPG keys hidden, only work directories writable. "auto" uses it when bubblewrap works here.
+	 */
+	sandbox?: "auto" | "bwrap" | "off";
 	/** Reasoning effort per role, for models that support it. */
 	thinking: Record<ModelRole, "off" | "minimal" | "low" | "medium" | "high" | "xhigh">;
 	/** Pinged every 5 minutes while vigil runs (e.g. a healthchecks.io URL), so you hear when it dies. */
