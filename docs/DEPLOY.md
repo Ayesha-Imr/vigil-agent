@@ -157,3 +157,9 @@ signal-cli -a +15551234567 daemon --http 127.0.0.1:8080
 A systemd user unit like vigil's works for it too. Set `"signal": { "url": "http://127.0.0.1:8080",
 "account": "+15551234567" }` under `channels`, and your own number in `owner.identities.signal` (or
 pair with `/pair`). vigil reconnects on its own if the daemon restarts.
+
+signal-cli's HTTP interface has no authentication: any process on the machine that can reach
+`127.0.0.1:8080` can send messages as the bot and read incoming ones. vigil's gate asks before a
+shell command talks to it, but that is a regex, not a wall. Run signal-cli as a different user, or
+in its own network namespace or container that only vigil can reach, if the machine runs anything
+you do not trust.

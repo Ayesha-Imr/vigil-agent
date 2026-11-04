@@ -367,7 +367,8 @@ verification skills, so they can do the same for your code.
   that finds the token could press them, and that includes the agent's own tools. Set
   `channels.http.allowApprovals` only if tools can't read vigil's files (a sandbox or container).
 - vigil's own config, policy, credentials and transcripts are off limits to every tool, ahead of
-  any rule you add. Secret environment variables are removed from the process after startup, so
+  any rule you add. File tools are checked by where a path really leads (relative paths, `..` and
+  symlinks included), not by how it is spelled. Secret environment variables are removed from the process after startup, so
   the shells the agent runs don't inherit them.
 - `web_fetch` refuses loopback, private and cloud-metadata addresses on every redirect hop. (It
   checks the resolved address before fetching; a DNS-rebinding race between that check and the
@@ -376,7 +377,9 @@ verification skills, so they can do the same for your code.
   injected page cannot read a file and send it out.
 - **Shell sandbox.** When [bubblewrap](https://github.com/containers/bubblewrap) is installed
   (`apt install bubblewrap`), every command the agent runs gets a read-only system, with vigil's
-  home, `~/.ssh`, `~/.gnupg` and `~/.pi` hidden, and only its work directories and `/tmp` writable.
+  home and the usual credential stores (`~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.kube`, `~/.docker`,
+  `~/.netrc`, …) hidden, and only its own folder and `/tmp` writable. GitHub CLI's login stays
+  visible so workers can use `gh`; pushes still need your approval.
   `vigil doctor` says whether it's active. The approval gate's regexes are a second layer on top:
   without the sandbox they are a guard rail, not a boundary, since a determined program can find a
   way around a regex.
