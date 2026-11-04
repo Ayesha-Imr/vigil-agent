@@ -371,6 +371,9 @@ export class Daemon {
 		const r = await promptWithFallback(s, session, "dream", "Consolidate now.");
 		session.dispose();
 		await gitCommit(s.paths.memory, `dream ${today}`);
+		// A repeated request becomes one low-urgency offer to automate it, waiting for the digest.
+		const suggestion = /^SUGGEST:\s*(.+)$/m.exec(r.text)?.[1]?.trim();
+		if (suggestion) s.notifier.notify({ urgency: "low", topic: "vigil:suggestion", text: `💡 ${suggestion}`, dedupKey: `suggest:${today}` });
 		return r.error ? `error: ${r.error}` : r.text.slice(0, 200);
 	}
 
