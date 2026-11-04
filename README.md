@@ -356,7 +356,11 @@ verification skills, so they can do the same for your code.
 - vigil's own config, policy, credentials and transcripts are off limits to every tool, ahead of
   any rule you add. Secret environment variables are removed from the process after startup, so
   the shells the agent runs don't inherit them.
-- `web_fetch` refuses loopback, private and cloud-metadata addresses on every redirect hop.
+- `web_fetch` refuses loopback, private and cloud-metadata addresses on every redirect hop. (It
+  checks the resolved address before fetching; a DNS-rebinding race between that check and the
+  fetch is not closed yet.)
+- Work vigil infers from untrusted content (a watched page) gets web tools but no file tools, so an
+  injected page cannot read a file and send it out.
 - **Shell sandbox.** When [bubblewrap](https://github.com/containers/bubblewrap) is installed
   (`apt install bubblewrap`), every command the agent runs gets a read-only system, with vigil's
   home, `~/.ssh`, `~/.gnupg` and `~/.pi` hidden, and only its work directories and `/tmp` writable.
