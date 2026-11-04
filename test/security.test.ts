@@ -90,3 +90,15 @@ describe("approvals over HTTP", () => {
 		expect(h.channel.texts()).toContain("refused");
 	});
 });
+
+describe("web_fetch stays on the public web", () => {
+	it("classifies internal addresses", async () => {
+		const { isInternalAddress, fetchText } = await import("../src/agent/web.ts");
+		for (const ip of ["127.0.0.1", "10.0.0.5", "172.20.1.1", "192.168.1.10", "169.254.169.254", "100.100.1.1", "::1", "fd00::1", "fe80::1", "::ffff:127.0.0.1", "0.0.0.0"]) {
+			expect(isInternalAddress(ip), ip).toBe(true);
+		}
+		for (const ip of ["8.8.8.8", "1.1.1.1", "2606:4700::1111"]) expect(isInternalAddress(ip), ip).toBe(false);
+		await expect(fetchText("http://127.0.0.1:7777/api/state")).rejects.toThrow(/internal/);
+		await expect(fetchText("http://localhost/")).rejects.toThrow(/internal/);
+	});
+});
