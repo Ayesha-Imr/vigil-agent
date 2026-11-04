@@ -393,4 +393,28 @@ describe("vigil end to end", () => {
 		await h.settle();
 		expect(h.channel.texts().some((t) => t.includes("Done from the shortcut."))).toBe(true);
 	});
+
+	it("consolidates memory at night, commits it, and turns a pattern into one quiet suggestion", async () => {
+		h = await harness((ctx) => {
+			if (ctx.system.includes("nightly memory consolidation") || ctx.lastUser.includes("Consolidate now")) {
+				if (ctx.lastToolResult) return say("Merged two facts.\nSUGGEST: You checked Lisbon fares three mornings running; want a daily 8:30 check?");
+				const path = /at (\S+MEMORY\.md)/.exec(ctx.lastUser + ctx.system)?.[1] ?? "";
+				return call("write", { path, content: "# Memory\n\n## About the owner\n\n## Preferences\n- Prefers aisle seats\n\n## Ongoing\n\n## Facts\n" });
+			}
+			return say("?");
+		}, (c) => {
+			c.proactive.dreamAt = "04:00";
+		});
+		h.daemon.s.memory.journal("owner", "what are Lisbon fares today?");
+		h.daemon.s.memory.journal("owner", "remember I prefer aisle seats");
+		const job = h.daemon.s.scheduler.list().find((j) => j.name === "dream")!;
+		await h.daemon.runJob({ job, slot: h.clock.now(), coalesced: 0, triggerId: 0 });
+		const { readFileSync, existsSync } = await import("node:fs");
+		expect(readFileSync(h.daemon.s.memory.memoryPath, "utf8")).toContain("Prefers aisle seats");
+		expect(existsSync(join(h.home, "memory", ".git"))).toBe(true);
+		const waiting = h.daemon.s.notifier.waiting();
+		expect(waiting.map((n) => n.topic)).toEqual(["vigil:suggestion"]);
+		expect(waiting[0].text).toContain("daily 8:30 check");
+		expect(h.channel.sent.length).toBe(0); // low urgency: it waits for the digest
+	});
 });
