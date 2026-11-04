@@ -82,10 +82,20 @@ describe("outbox findings", () => {
 		// Another live process holds the lock (the parent of this test process stands in for it).
 		h.daemon.s.db.setKv("daemon.lock", { pid: process.ppid, at: Date.now() });
 		await expect(h.restart()).rejects.toThrow(/already running/);
-		// A stale lock (no heartbeat for minutes) is taken over.
+		// A live node process is not taken over even with a stale heartbeat (a suspended machine, F2b).
 		h.daemon.s.db.setKv("daemon.lock", { pid: process.ppid, at: Date.now() - 10 * 60_000 });
-		const d2 = await h.restart();
-		await d2.stop();
+		await expect(h.restart()).rejects.toThrow(/already running/);
+		// A pid now used by some other program (vigil died, the pid was reused) is taken over.
+		const { spawn } = await import("node:child_process");
+		const other = spawn("sleep", ["30"]);
+		try {
+			h.daemon.s.db.setKv("daemon.lock", { pid: other.pid, at: Date.now() });
+			const d2 = await h.restart();
+			// (Both daemons here share one pid, so "only the holder sends" is checked by the outbox model.)
+			await d2.stop();
+		} finally {
+			other.kill();
+		}
 	});
 	it("F1: a ticket's question and its later report share an order key", async () => {
 		h = await harness((ctx) => {

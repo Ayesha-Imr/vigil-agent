@@ -52,6 +52,27 @@ export function shippedSkillsDir(): string {
 	return join(here, "..", "skills");
 }
 
+/**
+ * Whether the process that holds the lock is still a running vigil. A live process that looks like
+ * vigil (or node) is never taken over, even with a stale heartbeat: a suspended machine makes the
+ * heartbeat look old while the holder is fine (finding F2b). A dead pid, or a pid reused by some
+ * other program, is taken over.
+ */
+export function lockHolderAlive(lock: { pid: number; at: number }): boolean {
+	try {
+		process.kill(lock.pid, 0);
+	} catch {
+		return false;
+	}
+	try {
+		const cmd = readFileSync(`/proc/${lock.pid}/cmdline`, "utf8");
+		return /node|vigil|bun/.test(cmd);
+	} catch {
+		// No /proc (macOS): trust a fresh heartbeat only.
+		return Date.now() - lock.at < 2 * 60_000;
+	}
+}
+
 export function defaultOwnerRoute(cfg: VigilConfig, channels: Map<ChannelId, Channel>): OwnerRoute | undefined {
 	for (const id of cfg.owner.notify) {
 		const ch = channels.get(id);
@@ -166,24 +187,36 @@ export class Daemon {
 	 */
 	private takeLock(): void {
 		const s = this.s;
-		const lock = s.db.getKv<{ pid: number; at: number }>("daemon.lock");
-		const alive = (pid: number) => {
-			try {
-				process.kill(pid, 0);
-				return true;
-			} catch {
-				return false;
+		// One immediate transaction: two daemons starting at once are serialized by SQLite, and the
+		// second sees the first's lock (verification/outbox, finding F2c).
+		s.db.tx(() => {
+			const lock = s.db.getKv<{ pid: number; at: number }>("daemon.lock");
+			if (lock && lock.pid !== process.pid && lockHolderAlive(lock)) {
+				throw new Error(`vigil is already running on this home (pid ${lock.pid}). Stop it first, or talk to it through the HTTP API.`);
 			}
-		};
-		if (lock && lock.pid !== process.pid && alive(lock.pid) && Date.now() - lock.at < 2 * 60_000) {
-			throw new Error(`vigil is already running on this home (pid ${lock.pid}). Stop it first, or talk to it through the HTTP API.`);
+			s.db.setKv("daemon.lock", { pid: process.pid, at: Date.now() });
+		});
+	}
+
+	/** Whether this process still holds the lock; the outbox sends only while it does. */
+	holdsLock(): boolean {
+		return this.s.db.getKv<{ pid: number }>("daemon.lock")?.pid === process.pid;
+	}
+
+	/** Heartbeat the lock; a daemon that lost it (another took over) stops instead of sending twice. */
+	private heartbeatLock(): void {
+		if (!this.holdsLock()) {
+			this.log("another vigil took over this home; this one stops (finding F2b)");
+			void this.stop();
+			return;
 		}
-		s.db.setKv("daemon.lock", { pid: process.pid, at: Date.now() });
+		this.s.db.setKv("daemon.lock", { pid: process.pid, at: Date.now() });
 	}
 
 	async start(): Promise<void> {
 		const s = this.s;
 		this.takeLock();
+		s.outbox.mayDeliver = () => this.holdsLock();
 		s.scheduler.recover();
 		// Runs claimed before a crash but never done run now (verification/scheduler, finding S3).
 		const unfinished = s.scheduler.unfinishedRuns(DAY);
@@ -213,7 +246,7 @@ export class Daemon {
 				this.timers.push(t);
 			};
 			every(3_000, () => s.outbox.deliverDue());
-			every(30_000, () => s.db.setKv("daemon.lock", { pid: process.pid, at: Date.now() }));
+			every(30_000, () => this.heartbeatLock());
 			every(30_000, () => this.tickGovernorAndClock());
 			every(60_000, () => this.checkWatchers());
 			every(15_000, () => this.workers.pump());

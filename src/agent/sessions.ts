@@ -40,6 +40,8 @@ export interface SessionSpec {
 	model?: AnyModel;
 	/** Where approval requests go: the chat the request came from. Defaults to the owner's main channel. */
 	approvalRoute?: () => OwnerRoute | undefined;
+	/** The ticket this session works for: its approval asks keep the ticket's message order. */
+	ticketId?: string;
 }
 
 export interface Built {
@@ -99,6 +101,8 @@ export async function buildSession(s: Services, spec: SessionSpec): Promise<Buil
 						text,
 						buttons: [[{ data: `approve:${id}`, label: "Approve" }, { data: `deny:${id}`, label: "Deny" }]],
 						ref: { kind: "approval", id },
+						// An approval ask is one of the ticket's messages: same order key (outbox finding F1b).
+						orderKey: spec.ticketId ? `${spec.ticketId}:${route.channel}:${route.conversation}` : undefined,
 						silent: s.notifier.budget().quietNow,
 					});
 				},

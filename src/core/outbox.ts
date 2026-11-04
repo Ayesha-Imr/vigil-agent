@@ -46,6 +46,8 @@ export class Outbox {
 	private readonly clock: Clock;
 	private readonly channels: Map<ChannelId, Channel>;
 	private running = false;
+	/** Sends happen only while this returns true (the daemon holds its single-instance lock). */
+	mayDeliver: () => boolean = () => true;
 
 	constructor(db: Db, clock: Clock, channels: Map<ChannelId, Channel>) {
 		this.db = db;
@@ -83,7 +85,7 @@ export class Outbox {
 
 	/** Send every message that is due. Runs one pass at a time, so nothing is sent twice by us. */
 	async deliverDue(): Promise<number> {
-		if (this.running) return 0;
+		if (this.running || !this.mayDeliver()) return 0;
 		this.running = true;
 		let sent = 0;
 		try {
