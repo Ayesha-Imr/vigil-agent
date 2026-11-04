@@ -176,7 +176,10 @@ export async function promptWithFallback(s: Services, session: AgentSession, rol
 		} catch (err) {
 			error = err instanceof Error ? err.message : String(err);
 		}
-		if (!error) return { text: session.getLastAssistantText() ?? "", model: model ? key(model) : "?" };
+		if (!error) {
+			s.models.succeeded();
+			return { text: session.getLastAssistantText() ?? "", model: model ? key(model) : "?" };
+		}
 		const verdict = model ? s.models.failed(model, error) : { fallBack: false, kind: "other" as const };
 		s.db.event("model.error", `${role} ${model ? key(model) : "?"}: ${error.slice(0, 300)}`);
 		const next = verdict.fallBack ? s.models.pick(role, tried) : undefined;

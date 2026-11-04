@@ -323,4 +323,24 @@ describe("vigil end to end", () => {
 		expect(systemRuns).toBe(2);
 		expect(doneWith).toBe("OK");
 	});
+
+	it("tells the owner once when no model has answered for half an hour", async () => {
+		h = await harness(() => fauxAssistantMessage("", { stopReason: "error", errorMessage: "401 unauthorized: token expired" }), (c) => {
+			c.attention.quietHours = null;
+		});
+		for (const t of ["a", "b", "c"]) {
+			await h.channel.receive(t);
+			await h.settle(); // one turn each; back-to-back messages would be batched into one (a 401 is not retried by pi)
+		}
+		const before = h.channel.sent.length;
+		h.daemon.checkModelHealth();
+		await h.daemon.s.outbox.deliverDue();
+		expect(h.channel.sent.length).toBe(before); // not yet: under 30 minutes
+		h.clock.advance(31 * MINUTE);
+		h.daemon.checkModelHealth();
+		h.daemon.checkModelHealth();
+		await h.daemon.s.outbox.deliverDue();
+		const alerts = h.channel.texts().filter((t) => t.startsWith("I can't reach any model"));
+		expect(alerts.length).toBe(1);
+	});
 });

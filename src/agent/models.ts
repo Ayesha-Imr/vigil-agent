@@ -43,12 +43,21 @@ export class ModelRouter {
 	private readonly prefs: () => Record<ModelRole, string[]>;
 	private readonly clock: Clock;
 	private readonly cooling = new Map<string, number>();
+	/** When a model call last succeeded and how many failed since, for the outage alert. */
+	lastSuccessAt: number;
+	failuresSinceSuccess = 0;
 	private available: readonly AnyModel[] = [];
 
 	constructor(runtime: ModelRuntime, prefs: () => Record<ModelRole, string[]>, clock: Clock) {
 		this.runtime = runtime;
 		this.prefs = prefs;
 		this.clock = clock;
+		this.lastSuccessAt = clock.now();
+	}
+
+	succeeded(): void {
+		this.lastSuccessAt = this.clock.now();
+		this.failuresSinceSuccess = 0;
 	}
 
 	/** Refresh which models have usable credentials. Call after login and periodically. */
@@ -89,6 +98,7 @@ export class ModelRouter {
 	/** Record a failure; returns whether trying another model makes sense. */
 	failed(model: AnyModel, message: string): { kind: FailureKind; fallBack: boolean } {
 		const kind = classifyError(message);
+		this.failuresSinceSuccess++;
 		const ms = COOLDOWN_MS[kind];
 		if (ms > 0) {
 			// Quota and auth problems are account-wide: cool the whole provider down.

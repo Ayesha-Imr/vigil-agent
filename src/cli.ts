@@ -201,6 +201,9 @@ async function start(p: Paths, opts: { cli: boolean }): Promise<Daemon> {
 		await daemon.stop();
 		process.exit(0);
 	};
+	// An always-on daemon must not die of one stray promise; log it and keep going.
+	process.on("unhandledRejection", (err) => console.error(`[vigil] unhandled rejection: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`));
+	process.on("uncaughtException", (err) => console.error(`[vigil] uncaught exception: ${err.stack ?? err.message}`));
 	process.on("SIGINT", () => void shutdown());
 	process.on("SIGTERM", () => void shutdown());
 	return daemon;

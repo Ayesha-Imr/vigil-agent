@@ -189,6 +189,7 @@ export class Daemon {
 			every(60_000, () => this.checkWatchers());
 			every(15_000, () => this.workers.pump());
 			every(10 * 60_000, () => s.models.refresh());
+			every(5 * 60_000, () => this.checkModelHealth());
 			if (s.cfg.healthcheckUrl) {
 				const ping = () => fetch(s.cfg.healthcheckUrl!, { signal: AbortSignal.timeout(10_000) }).catch(() => {});
 				void ping();
@@ -198,6 +199,20 @@ export class Daemon {
 		this.workers.pump();
 		s.db.event("daemon.started", "vigil started");
 		this.log("vigil is running");
+	}
+
+	/** Tell the owner, once a day at most, when no model has answered for half an hour. */
+	checkModelHealth(): void {
+		const m = this.s.models;
+		const down = this.s.clock.now() - m.lastSuccessAt;
+		if (m.failuresSinceSuccess < 3 || down < 30 * 60_000) return;
+		const cooling = m.coolingDown().map((c) => c.model).join(", ");
+		this.s.notifier.notify({
+			urgency: "high",
+			topic: "vigil:models",
+			dedupKey: `models-down:${localDate(this.s.clock.now(), this.s.cfg.owner.timezone)}`,
+			text: `I can't reach any model (${m.failuresSinceSuccess} failures in ${Math.round(down / 60_000)} min${cooling ? `; cooling down: ${cooling}` : ""}). Check /status, or /login codex if the login expired.`,
+		});
 	}
 
 	/** Run every loop once. For tests and `vigil tick`. */
