@@ -163,8 +163,8 @@ export class Concierge {
 			this.origin = { channel: input.channel, conversation: input.conversation, externalId: input.externalId };
 			this.s.memory.journal("owner", input.text.replace(/^\[[^\]]+\]\s*/, ""));
 			let text = since + (input.text.startsWith("[") ? input.text : this.tag(input));
-			// Peek only: the notices count as told once a reply mentioning them is stored (below).
-			const waiting = this.s.notifier.waiting();
+			// Claimed for this reply: told once the reply is stored, released if it is not (below).
+			const waiting = this.s.notifier.claimForReply();
 			if (waiting.length) {
 				text += `\n\n(While you were away, not yet told to the owner:\n${waiting.map((n) => `- [${n.effective}] ${n.text}`).join("\n")})`;
 			}
@@ -179,9 +179,14 @@ export class Concierge {
 			}
 			if (r.error && !r.text) for (const n of notes) noteToConcierge(this.s, n);
 			const out = r.error && !r.text ? `Something went wrong on my side (${r.error.slice(0, 200)}). Try again in a bit.` : r.text;
-			if (out && !SILENT.test(out)) {
+			const ids = waiting.map((n) => n.id);
+			if (out && !SILENT.test(out) && r.text) {
+				// A stored reply counts as told, error or not (finding ConciergePartialReply).
 				this.reply(input, out);
-				if (!r.error) this.s.notifier.confirmDelivered(waiting.map((n) => n.id));
+				this.s.notifier.confirmDelivered(ids);
+			} else {
+				if (out && !SILENT.test(out)) this.reply(input, out);
+				this.s.notifier.releaseClaim(ids);
 			}
 			this.s.db.setKv(SESSION_KEY, session.sessionFile ?? null);
 			this.markDone(input.triggerIds);

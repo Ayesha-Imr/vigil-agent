@@ -104,3 +104,38 @@ describe("outbox findings", () => {
 		expect(r?.order_key).toBe(q?.order_key);
 	});
 });
+
+describe("governor findings", () => {
+	it("ConciergeToldTwice: a notice claimed for a reply is not also sent in the morning digest", async () => {
+		const g = await import("../src/core/governor.ts");
+		const policy = { ...g.DEFAULT_POLICY, timezone: "UTC" };
+		const night = Date.UTC(2026, 10, 4, 23, 0);
+		let s = g.offer(g.initialState(night), { id: "n1", urgency: "normal", topic: "x", text: "held overnight" }, night, policy).state;
+		const morning = Date.UTC(2026, 10, 5, 7, 59);
+		s = g.tick(s, morning, policy).state;
+		const c = g.claim(s, morning); // the owner writes at 07:59; the reply is being written
+		expect(c.notices.map((n) => n.id)).toEqual(["n1"]);
+		const t = g.tick(c.state, Date.UTC(2026, 10, 5, 8, 1), policy); // quiet hours end mid-turn
+		expect(t.digest).toEqual([]);
+		const told = g.markDelivered(t.state, ["n1"], Date.UTC(2026, 10, 5, 8, 2));
+		expect(told.notices.map((n) => n.status)).toEqual(["digested"]);
+		const released = g.release(c.state, ["n1"]);
+		expect(released.notices[0].status).toBe("held");
+	});
+	it("DigestCommandStale: /digest does not show a notice past its expiry", async () => {
+		const g = await import("../src/core/governor.ts");
+		const policy = { ...g.DEFAULT_POLICY, timezone: "UTC" };
+		const t0 = Date.UTC(2026, 10, 4, 12, 0);
+		const s = g.offer(g.initialState(t0), { id: "n1", urgency: "low", topic: "x", text: "stale", expiresAt: t0 + 60_000 }, t0, policy).state;
+		expect(g.takeForReply(s, t0 + 120_000).notices).toEqual([]);
+	});
+	it("WindowGap/WindowDedup: config refuses windows longer than the governor's history", async () => {
+		const { mkdtempSync, writeFileSync } = await import("node:fs");
+		const { tmpdir } = await import("node:os");
+		const { join } = await import("node:path");
+		const { loadConfig, paths } = await import("../src/config.ts");
+		const home = mkdtempSync(join(tmpdir(), "vigil-win-"));
+		writeFileSync(join(home, "config.json"), JSON.stringify({ owner: { timezone: "UTC" }, attention: { minGapMinutes: 2000 } }));
+		expect(() => loadConfig(paths(home))).toThrow(/minGapMinutes/);
+	});
+});

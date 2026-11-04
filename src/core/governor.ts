@@ -52,8 +52,11 @@ export interface NoticeInput {
 	ticketId?: string;
 }
 
-/** Where a notice is. `queued` and `held` wait; the rest are final. */
-export type NoticeStatus = "queued" | "held" | "delivered" | "digested" | "dropped" | "expired";
+/**
+ * Where a notice is. `queued` and `held` wait; `claimed` is shown to a reply that is being written
+ * (ticks, mutes and expiry leave it alone until the reply is stored or abandoned); the rest are final.
+ */
+export type NoticeStatus = "queued" | "held" | "claimed" | "delivered" | "digested" | "dropped" | "expired";
 
 export type Decision = "deliver" | "hold" | "digest" | "drop:duplicate" | "drop:muted";
 
@@ -71,6 +74,8 @@ export interface Notice {
 	status: NoticeStatus;
 	decision: Decision;
 	resolvedAt?: number;
+	/** The waiting status a claimed notice returns to if its reply is abandoned. */
+	claimedFrom?: "queued" | "held";
 }
 
 export interface GovernorState {
@@ -282,24 +287,50 @@ function flush(notices: Notice[], now: number): { notices: Notice[]; flushed: No
  * anyway. This is a solicited delivery, so quiet hours and the budget do not apply.
  */
 export function takeForReply(state: GovernorState, now: number): { state: GovernorState; notices: Notice[] } {
-	const out = flush(state.notices, now);
+	// Expire first: a notice past its expiry must not be shown just because no tick ran yet.
+	const fresh = state.notices.map((n) => (isWaiting(n) && n.expiresAt <= now ? { ...n, status: "expired" as const, resolvedAt: now } : n));
+	const out = flush(fresh, now);
 	return { state: { ...state, notices: out.notices }, notices: out.flushed };
 }
 
 /**
- * Mark the given waiting notices as delivered in a reply, after that reply is safely stored.
- * Notices that stopped waiting meanwhile (expired, muted) are left as they are.
+ * Claim the waiting, unexpired notices for a reply that is about to be written. A claimed notice is
+ * left alone by ticks, digests, mutes and expiry, so it cannot also go out in a digest while the
+ * model is thinking (verification/governor, finding ConciergeToldTwice).
  */
+export function claim(state: GovernorState, now: number): { state: GovernorState; notices: Notice[] } {
+	const claimed: Notice[] = [];
+	const notices = state.notices.map((n) => {
+		if (!isWaiting(n) || n.expiresAt <= now) return n;
+		const c: Notice = { ...n, status: "claimed", claimedFrom: n.status as "queued" | "held" };
+		claimed.push(c);
+		return c;
+	});
+	return { state: { ...state, notices }, notices: claimed };
+}
+
+/** The reply that showed these claimed notices was stored: they count as told. */
 export function markDelivered(state: GovernorState, ids: readonly string[], now: number): { state: GovernorState; notices: Notice[] } {
 	const want = new Set(ids);
 	const done: Notice[] = [];
 	const notices = state.notices.map((n) => {
-		if (!want.has(n.id) || !isWaiting(n)) return n;
-		const d: Notice = { ...n, status: "digested", resolvedAt: now };
+		if (!want.has(n.id) || (n.status !== "claimed" && !isWaiting(n))) return n;
+		const d: Notice = { ...n, status: "digested", resolvedAt: now, claimedFrom: undefined };
 		done.push(d);
 		return d;
 	});
 	return { state: { ...state, notices }, notices: done };
+}
+
+/** No reply was stored: claimed notices wait again, as they were. */
+export function release(state: GovernorState, ids?: readonly string[]): GovernorState {
+	const want = ids ? new Set(ids) : undefined;
+	return {
+		...state,
+		notices: state.notices.map((n) =>
+			n.status === "claimed" && (!want || want.has(n.id)) ? { ...n, status: n.claimedFrom ?? "queued", claimedFrom: undefined } : n,
+		),
+	};
 }
 
 /** Peek at what waits, without changing anything. */

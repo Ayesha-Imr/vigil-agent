@@ -1,72 +1,100 @@
 #!/usr/bin/env bash
-# Model-check vigil's governor and approvals specs with TLC, then run the other agents' checks.
-#   bash verification/run.sh          the checks below (about 1-2 minutes on 4 cores)
-#   bash verification/run.sh --deep   also the deeper configs (a few more minutes)
-# Prints one line per check and exits nonzero when any required check fails.
-# Results are kept in verification/out/ (tlc output per check) for reading counterexamples.
+# Model-check vigil's attention governor and approvals with TLC, then run the checks other
+# agents own (verification/{outbox,scheduler,workers}/check.sh).
+#
+#   bash verification/run.sh            required configs, modeled fixes, findings (about 2 min on 4 cores)
+#   bash verification/run.sh --deep     also the deeper configs (a few more minutes)
+#   bash verification/run.sh --strict   also exit nonzero while any finding is open
+#   bash verification/run.sh --only governor   one spec (governor or approvals), no other agents' checks
+#
+# One line per check:
+#   PASS     a required config or a modeled fix: every rule in it holds.
+#   FAIL     a required config or a modeled fix broke a rule, or TLC stopped with an error.
+#   FINDING  a findings/*.cfg reproduced the rule violation it names (an open finding, see README.md).
+#   FIXED?   a findings/*.cfg no longer breaks its rule: the code or the model changed. Read the
+#            verify skill and decide whether the finding is fixed (move it) or the model drifted.
+# Then one summary line per spec. Exit code: 0 when every required check passes and every finding
+# reproduces as recorded; 1 otherwise (and, with --strict, also while a finding is open).
+# TLC's full output for every check is kept in verification/out/ for reading counterexamples.
 set -u
 . "$(dirname "$0")/lib.sh"
+command -v java >/dev/null || { echo "java not found (Java 11 or later is needed)"; exit 2; }
 JAR=$(find_jar) || exit 2
-command -v java >/dev/null || { echo "java not found (Java 11 or later)"; exit 2; }
 OUT="$VERIFY_DIR/out"; mkdir -p "$OUT"
-deep=0; [ "${1:-}" = "--deep" ] && deep=1
+deep=0; strict=0; only=""
+while [ $# -gt 0 ]; do
+	case $1 in
+		--deep) deep=1 ;;
+		--strict) strict=1 ;;
+		--only) only=${2:-}; shift ;;
+		*) echo "unknown option $1"; exit 2 ;;
+	esac
+	shift
+done
+SPECS=(governor approvals); [ -n "$only" ] && SPECS=("$only")
 
-# required: dir module cfg       (must pass)
+# spec  module  config   (each must pass)
 REQUIRED=(
 	"governor MCGovernor.tla Governor.cfg"
 	"governor MCGovernor.tla Governor_three.cfg"
 	"governor MCGovernor.tla Governor_live.cfg"
 	"governor MCGovernor.tla Governor_concierge.cfg"
+	"governor MCGovernor.tla fixes/ClaimOnPeek.cfg"
 	"approvals MCApprovals.tla Approvals.cfg"
 	"approvals MCApprovals.tla Approvals_live.cfg"
 )
 DEEP=(
 	"governor MCGovernor.tla Governor_deep.cfg"
+	"governor MCGovernor.tla fixes/ClaimOnPeek_deep.cfg"
 	"approvals MCApprovals.tla Approvals_deep.cfg"
 )
-# findings: checks of open findings that are not DESIGN.md rules or need a non-default config.
-# They print FINDING while the finding is open and do not fail the run (see verification/README.md).
-FINDINGS=(
-	"governor MCGovernor.tla Governor_stale.cfg"
-	"governor MCGovernor.tla Governor_window_gap.cfg"
-	"governor MCGovernor.tla Governor_window_dedup.cfg"
-	"approvals MCApprovals.tla Approvals_httpopt.cfg"
-)
+[ $deep = 1 ] && REQUIRED+=("${DEEP[@]}")
 
-failed=0
-check() { # kind dir module cfg
-	local kind=$1 dir=$2 module=$3 cfg=$4 name out t0 v n
-	name="$dir/${cfg%.cfg}"; out="$OUT/$dir-${cfg%.cfg}.out"
-	t0=$(date +%s)
-	run_tlc "$VERIFY_DIR/$dir" "$module" "$cfg" "$out"
-	v=$(verdict "$out"); n=$(states "$out"); t=$(( $(date +%s) - t0 ))
-	if [ "$v" = pass ]; then
-		printf '%-8s %-34s %10s states %4ss\n' PASS "$name" "${n:-?}" "$t"
-	elif [ "$kind" = finding ] && [ "${v#violated}" != "$v" ]; then
-		printf '%-8s %-34s %s  (%s)\n' FINDING "$name" "$v" "${out#$VERIFY_DIR/}"
-	else
-		printf '%-8s %-34s %s  (%s)\n' FAIL "$name" "$v" "${out#$VERIFY_DIR/}"
-		failed=1
-	fi
-}
+failed=0; open=0
+declare -A specfail specopen
+line() { printf '%-8s %-44s %s\n' "$1" "$2" "$3"; }
 
-echo "TLC: $JAR"
-for c in "${REQUIRED[@]}"; do check required $c; done
-if [ $deep = 1 ]; then for c in "${DEEP[@]}"; do check required $c; done; fi
-for c in "${FINDINGS[@]}"; do check finding $c; done
+for c in "${REQUIRED[@]}"; do
+	set -- $c; spec=$1 module=$2 cfg=$3
+	[ -n "$only" ] && [ "$spec" != "$only" ] && continue
+	name="$spec/${cfg%.cfg}"; out="$OUT/${name//\//-}.out"; t0=$(date +%s)
+	run_tlc "$VERIFY_DIR/$spec" "$module" "$cfg" "$out"
+	v=$(verdict "$out"); t=$(( $(date +%s) - t0 ))
+	if [ "$v" = pass ]; then line PASS "$name" "$(states "$out") states, ${t}s"
+	else line FAIL "$name" "$v  (${out#"$VERIFY_DIR"/})"; failed=1; specfail[$spec]=1; fi
+done
+
+for spec in "${SPECS[@]}"; do
+	module=MCGovernor.tla; [ $spec = approvals ] && module=MCApprovals.tla
+	for f in "$VERIFY_DIR/$spec"/findings/*.cfg; do
+		[ -f "$f" ] || continue
+		cfg=findings/$(basename "$f"); name="$spec/${cfg%.cfg}"; out="$OUT/${name//\//-}.out"
+		expect=$(sed -n 's/^\\\* expect: //p' "$f" | head -1)
+		run_tlc "$VERIFY_DIR/$spec" "$module" "$cfg" "$out"
+		v=$(verdict "$out")
+		case "$v" in
+			"violated: Invariant $expect is violated."|"violated: Action property $expect is violated."|"violated: Temporal properties were violated.")
+				line FINDING "$name" "$expect breaks  (${out#"$VERIFY_DIR"/})"; open=$((open + 1)); specopen[$spec]=$(( ${specopen[$spec]:-0} + 1 )) ;;
+			pass) line 'FIXED?' "$name" "$expect now holds: update the verify skill (see its 'When a finding stops reproducing')"; failed=1; specfail[$spec]=1 ;;
+			*) line FAIL "$name" "$v  (${out#"$VERIFY_DIR"/})"; failed=1; specfail[$spec]=1 ;;
+		esac
+	done
+done
 
 # Checks other agents own: each exits nonzero on failure.
 for other in outbox scheduler workers; do
+	[ -n "$only" ] && continue
 	script="$VERIFY_DIR/$other/check.sh"
 	[ -f "$script" ] || continue
 	t0=$(date +%s)
-	if bash "$script" >"$OUT/$other-check.out" 2>&1; then
-		printf '%-8s %-34s %21s %4ss\n' PASS "$other/check.sh" "" "$(( $(date +%s) - t0 ))"
-	else
-		printf '%-8s %-34s see %s\n' FAIL "$other/check.sh" "out/$other-check.out"
-		failed=1
-	fi
+	if bash "$script" >"$OUT/$other-check.out" 2>&1; then line PASS "$other/check.sh" "$(( $(date +%s) - t0 ))s"
+	else line FAIL "$other/check.sh" "see out/$other-check.out"; failed=1; specfail[$other]=1; fi
 done
 
-[ $failed = 0 ] && echo "all required checks pass" || echo "some required checks FAIL"
+echo
+for spec in "${SPECS[@]}"; do
+	if [ -n "${specfail[$spec]:-}" ]; then echo "$spec: FAIL"
+	else echo "$spec: PASS (${specopen[$spec]:-0} open findings reproduce as recorded)"; fi
+done
+[ $strict = 1 ] && [ $open -gt 0 ] && failed=1
 exit $failed

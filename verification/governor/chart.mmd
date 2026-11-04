@@ -1,0 +1,35 @@
+---
+title: "Attention governor: one notice through a day"
+---
+stateDiagram-v2
+  direction LR
+  state "At the same time" as all {
+    state "Notice" as r0 {
+      s0: No notice yet
+      s1: Sent on its own
+      s2: Held for the morning
+      s3: Waiting for the digest
+      s4: Sent in a digest
+      s5: Expired unsent
+      [*] --> s0
+      s0 --> s1: a notice comes in [unless Evening]
+      s0 --> s2: a notice comes in [when Night (quiet hours)]
+      s0 --> s3: a notice comes in [unless Evening]
+      s2 --> s4: you send /digest
+      s3 --> s4: you send /digest
+      s2 --> s4: the 30-second tick runs [when Day]
+      s2 --> s5: the 30-second tick runs [unless Day]
+      s3 --> s5: the 30-second tick runs [unless Day]
+      s3 --> s4: the 30-second tick runs [when Evening]
+    }
+    --
+    state "Clock" as r1 {
+      s6: Night (quiet hours)
+      s7: Day
+      s8: Evening
+      [*] --> s6
+      s6 --> s7: time passes [unless Expired unsent]
+      s7 --> s8: time passes
+      s8 --> s6: time passes
+    }
+  }

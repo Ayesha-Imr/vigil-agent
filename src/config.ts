@@ -178,6 +178,9 @@ function validate(cfg: VigilConfig): void {
 		throw new Error(`proactive.mode must be off, observe or auto`);
 	}
 	if (cfg.workers.max < 1) throw new Error("workers.max must be at least 1");
+	// The governor keeps a day of interrupts and a week of notices (verification/governor, WindowGap/WindowDedup).
+	if (cfg.attention.minGapMinutes > 1440) throw new Error("attention.minGapMinutes must be at most 1440 (a day)");
+	if (cfg.attention.dedupWindowMinutes > 7 * 1440) throw new Error("attention.dedupWindowMinutes must be at most 10080 (a week)");
 }
 
 export function saveConfig(cfg: VigilConfig, p: Paths = paths()): void {

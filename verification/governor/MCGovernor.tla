@@ -22,7 +22,13 @@ MCPolicies == {
      maxInt |-> 2, minGap |-> 1, critCap |-> 0, dedup |-> 2, expiry |-> 2]
 }
 
-\* For Governor_windows.cfg only: windows longer than what tick() keeps. The config there sets
+\* For chart.cfg only (the statechart drawing): the DEFAULT_POLICY-like policy alone.
+ChartPolicies == {
+    [hasQuiet |-> TRUE, qStart |-> 0, qEnd |-> 1, digest |-> {2},
+     maxInt |-> 1, minGap |-> 1, critCap |-> 1, dedup |-> 2, expiry |-> 2]
+}
+
+\* For findings/Window*.cfg only: windows longer than what tick() keeps. The config there sets
 \* HistorySlots = 1 as a stand-in for HISTORY_MS (7 days), so dedup = 3 > HistorySlots plays a
 \* dedupWindowMinutes above 7 days, and minGap = 4 > D plays a minGapMinutes above 24 hours.
 \* src/config.ts validate() accepts both.

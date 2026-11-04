@@ -9,8 +9,10 @@ import {
 	type BudgetView,
 	type GovernorPolicy,
 	type GovernorState,
+	claim,
 	initialState,
 	markDelivered,
+	release,
 	mute,
 	type Notice,
 	type NoticeInput,
@@ -54,6 +56,8 @@ export class Notifier {
 		this.policy = opts.policy;
 		this.route = opts.route;
 		this.state = this.db.getKv<GovernorState>(STATE_KEY) ?? initialState(this.clock.now());
+		// A claim cannot outlive the process that made it: after a restart, claimed notices wait again.
+		this.state = release(this.state);
 	}
 
 	/** Offer a notification to the governor; it is sent now, later, or never. */
@@ -106,6 +110,20 @@ export class Notifier {
 			for (const n of r.notices) this.record(n);
 			return r.notices;
 		});
+	}
+
+	/** Claim what waits for a reply being written; confirm or release it when the turn ends. */
+	claimForReply(): Notice[] {
+		return this.db.tx(() => {
+			const r = claim(this.state, this.clock.now());
+			this.commit(r.state);
+			return r.notices;
+		});
+	}
+
+	/** The reply was not stored: the claimed notices wait again. */
+	releaseClaim(ids: readonly string[]): void {
+		if (ids.length) this.commit(release(this.state, ids));
 	}
 
 	/** Confirm that a stored reply told the owner about these waiting notices. */

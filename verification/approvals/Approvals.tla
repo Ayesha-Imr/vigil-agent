@@ -26,6 +26,8 @@
 (*                 a, callHash(tool, input)) and run the call on true;     *)
 (*                 otherwise block it.                                     *)
 (*  Retry(c)       the worker's model issues the same tool call again.     *)
+(*  Dispose        Approvals.dispose() at shutdown: every waiter gets      *)
+(*                 "expired"; a later wait() returns "expired" at once.    *)
 (*  Advance        the clock moves on.                                     *)
 (*                                                                         *)
 (* Who can press a button (the boundary that decide() itself does not      *)
@@ -63,12 +65,13 @@ VARIABLES
     myAp,       \* the approval id each call asked for (a.id)
     outcome,    \* what wait() resolved to: none, approved, denied, expired
     aborted,    \* ctx.signal fired for this call's current approval
+    disposed,   \* Approvals.disposed (shutdown)
     \* ghosts
     ownerWord,  \* the owner's first press on an approval before it expired: none, approve, deny
     decidedBy,  \* who caused decide() to change the row: none or a principal
     execs       \* every run of a call: [c, a, at, consumed]
 
-vars == <<now, ap, nextId, hashOf, pc, myAp, outcome, aborted, ownerWord, decidedBy, execs>>
+vars == <<now, ap, nextId, hashOf, pc, myAp, outcome, aborted, disposed, ownerWord, decidedBy, execs>>
 
 Init ==
     /\ now = 0
@@ -79,6 +82,7 @@ Init ==
     /\ myAp = [c \in Calls |-> 0]
     /\ outcome = [c \in Calls |-> "none"]
     /\ aborted = [c \in Calls |-> FALSE]
+    /\ disposed = FALSE
     /\ ownerWord = [a \in Ids |-> "none"]
     /\ decidedBy = [a \in Ids |-> "none"]
     /\ execs = {}
@@ -100,10 +104,11 @@ Request(c) ==
     /\ ap' = [ap EXCEPT ![nextId] = [status |-> "pending", hash |-> hashOf[c], expiresAt |-> now + TTL]]
     /\ nextId' = nextId + 1
     /\ myAp' = [myAp EXCEPT ![c] = nextId]
-    /\ pc' = [pc EXCEPT ![c] = "waiting"]   \* wait(): the row is pending, so it registers a waiter
-    /\ outcome' = [outcome EXCEPT ![c] = "none"]
+    \* wait(): the row is pending, so it registers a waiter, unless disposed: then "expired" at once
+    /\ pc' = [pc EXCEPT ![c] = IF disposed THEN "woken" ELSE "waiting"]
+    /\ outcome' = [outcome EXCEPT ![c] = IF disposed THEN "expired" ELSE "none"]
     /\ aborted' = [aborted EXCEPT ![c] = FALSE]
-    /\ UNCHANGED <<now, hashOf, ownerWord, decidedBy, execs>>
+    /\ UNCHANGED <<now, hashOf, disposed, ownerWord, decidedBy, execs>>
 
 (* Daemon.route for a button press "approve:<id>" / "deny:<id>" from principal p. *)
 Press(p, a, approve) ==
@@ -124,7 +129,7 @@ Press(p, a, approve) ==
           /\ ownerWord' = IF p = "owner" /\ ownerWord[a] = "none" /\ now < ap[a].expiresAt
                             THEN [ownerWord EXCEPT ![a] = IF approve THEN "approve" ELSE "deny"]
                             ELSE ownerWord
-    /\ UNCHANGED <<now, nextId, hashOf, myAp, aborted, execs>>
+    /\ UNCHANGED <<now, nextId, hashOf, myAp, aborted, disposed, execs>>
 
 \* expire() as one step, waking the waiters of the rows it expired.
 ExpireStep(extraWoken, extraOutcome) ==
@@ -140,13 +145,13 @@ Timer(c) ==
     /\ pc[c] = "waiting"
     /\ now >= ap[myAp[c]].expiresAt
     /\ ExpireStep({c}, [x \in Calls |-> IF ApAfterExpire[myAp[x]].status = "approved" THEN "approved" ELSE "expired"])
-    /\ UNCHANGED <<now, nextId, hashOf, myAp, aborted, ownerWord, decidedBy, execs>>
+    /\ UNCHANGED <<now, nextId, hashOf, myAp, aborted, disposed, ownerWord, decidedBy, execs>>
 
 (* Daemon.tickGovernorAndClock, every 30 s: approvals.expire(). *)
 Sweep ==
     /\ ExpiredNow # {}
     /\ ExpireStep({}, outcome)
-    /\ UNCHANGED <<now, nextId, hashOf, myAp, aborted, ownerWord, decidedBy, execs>>
+    /\ UNCHANGED <<now, nextId, hashOf, myAp, aborted, disposed, ownerWord, decidedBy, execs>>
 
 (* ctx.signal aborts (the turn is stopped). The listener stays attached after wait() resolved. *)
 Abort(c) ==
@@ -158,7 +163,7 @@ Abort(c) ==
     \* done("expired"): resolves the promise if it has not resolved yet
     /\ outcome' = IF pc[c] = "waiting" THEN [outcome EXCEPT ![c] = "expired"] ELSE outcome
     /\ pc' = [pc EXCEPT ![c] = "woken"]
-    /\ UNCHANGED <<now, nextId, hashOf, myAp, ownerWord, decidedBy, execs>>
+    /\ UNCHANGED <<now, nextId, hashOf, myAp, disposed, ownerWord, decidedBy, execs>>
 
 ConsumeIds(c) == IF AnyIdToConsume THEN Existing ELSE {myAp[c]}
 
@@ -175,18 +180,26 @@ Continue(c, a) ==
                  /\ execs' = IF ok THEN execs \cup {[c |-> c, a |-> a, at |-> now, consumed |-> TRUE]} ELSE execs
          ELSE /\ pc' = [pc EXCEPT ![c] = "refused"]
               /\ UNCHANGED <<ap, execs>>
-    /\ UNCHANGED <<now, nextId, hashOf, myAp, outcome, aborted, ownerWord, decidedBy>>
+    /\ UNCHANGED <<now, nextId, hashOf, myAp, outcome, aborted, disposed, ownerWord, decidedBy>>
+
+(* Approvals.dispose(): disposed = true; every registered waiter's done("expired"). Rows unchanged. *)
+Dispose ==
+    /\ ~disposed
+    /\ disposed' = TRUE
+    /\ pc' = [c \in Calls |-> IF pc[c] = "waiting" THEN "woken" ELSE pc[c]]
+    /\ outcome' = [c \in Calls |-> IF pc[c] = "waiting" THEN "expired" ELSE outcome[c]]
+    /\ UNCHANGED <<now, ap, nextId, hashOf, myAp, aborted, ownerWord, decidedBy, execs>>
 
 (* The model calls the same tool again: a new tool_call event, a new approval. *)
 Retry(c) ==
     /\ pc[c] = "refused"
     /\ pc' = [pc EXCEPT ![c] = "idle"]
-    /\ UNCHANGED <<now, ap, nextId, hashOf, myAp, outcome, aborted, ownerWord, decidedBy, execs>>
+    /\ UNCHANGED <<now, ap, nextId, hashOf, myAp, outcome, aborted, disposed, ownerWord, decidedBy, execs>>
 
 Advance ==
     /\ now < MaxTime
     /\ now' = now + 1
-    /\ UNCHANGED <<ap, nextId, hashOf, pc, myAp, outcome, aborted, ownerWord, decidedBy, execs>>
+    /\ UNCHANGED <<ap, nextId, hashOf, pc, myAp, outcome, aborted, disposed, ownerWord, decidedBy, execs>>
 
 PressAny == \E p \in People, a \in Ids, b \in BOOLEAN : Press(p, a, b)
 TimerAny == \E c \in Calls : Timer(c)
@@ -208,6 +221,7 @@ Next ==
     \/ AbortAny
     \/ ContinueAny
     \/ \E c \in Calls : Retry(c)
+    \/ Dispose
     \/ Advance
 
 \* Timers fire, the gate's continuation runs, and the clock moves on.
