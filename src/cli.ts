@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { ModelRouter } from "./agent/models.ts";
 import { createChannels } from "./channels/index.ts";
-import { type ChannelId, defaultConfig, loadConfig, type ModelRole, type Paths, paths, saveConfig, type VigilConfig } from "./config.ts";
+import { type ChannelId, defaultConfig, loadConfig, type ModelRole, type Paths, paths, saveConfig, scrubSecretEnv, type VigilConfig } from "./config.ts";
 import { systemClock } from "./core/time.ts";
 import { Daemon } from "./daemon.ts";
 import { panelRoutes } from "./panel/panel.ts";
@@ -182,6 +182,8 @@ async function doctor(p: Paths): Promise<void> {
 
 async function start(p: Paths, opts: { cli: boolean }): Promise<Daemon> {
 	const cfg = loadConfig(p);
+	// Secrets are in cfg now; take them out of the environment the agent's shells inherit.
+	const secrets = scrubSecretEnv();
 	let daemonRef: Daemon | undefined;
 	const channels = createChannels(cfg, p, {
 		cli: opts.cli ? { onClose: () => void shutdown() } : false,
@@ -194,6 +196,8 @@ async function start(p: Paths, opts: { cli: boolean }): Promise<Daemon> {
 	}
 	const daemon = await Daemon.create({ paths: p, cfg, channels, log: opts.cli ? () => {} : (l) => console.log(`[vigil] ${l}`) });
 	daemonRef = daemon;
+	if (secrets.OPENCODE_API_KEY) await daemon.s.modelRuntime.setRuntimeApiKey("opencode-go", secrets.OPENCODE_API_KEY);
+	await daemon.s.models.refresh();
 	await daemon.start();
 	const http = cfg.channels.http;
 	if (!opts.cli && http?.token) console.log(`[vigil] panel: http://127.0.0.1:${http.port}/panel?token=${http.token}`);

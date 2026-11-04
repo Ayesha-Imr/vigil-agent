@@ -16,6 +16,8 @@ export interface PanelState {
 	jobs: { id: string; name: string; when: string; next: number | null; action: string; system: boolean; last: string | null }[];
 	watchers: { id: string; name: string; target: string; every: number; error: string | null }[];
 	events: { at: number; kind: string; text: string }[];
+	/** Whether approve/deny and mode changes work from here (channels.http.allowApprovals). */
+	httpApprovals: boolean;
 	/** What observe mode would have done in the last week; the case for switching to auto. */
 	observed: { at: number; text: string }[];
 	model: string | null;
@@ -38,11 +40,13 @@ export function panelState(d: Daemon): PanelState {
 			kind: "approval",
 			id: a.id,
 			title: `${a.requester} wants to run ${a.tool}`,
-			detail: `${a.reason}: ${approvalText(a.tool, a.args)}`,
-			actions: [
-				{ label: "Approve", data: `approve:${a.id}` },
-				{ label: "Deny", data: `deny:${a.id}` },
-			],
+			detail: `${a.reason}: ${approvalText(a.tool, a.args)}${s.cfg.channels.http?.allowApprovals ? "" : "\n(Approve or deny it in your chat app.)"}`,
+			actions: s.cfg.channels.http?.allowApprovals
+				? [
+						{ label: "Approve", data: `approve:${a.id}` },
+						{ label: "Deny", data: `deny:${a.id}` },
+					]
+				: [],
 		});
 	}
 	for (const q of s.db.all<{ id: string; ticket_id: string; question: string; choices: string }>("SELECT * FROM attentions WHERE status = 'open' ORDER BY created_at")) {
@@ -83,6 +87,7 @@ export function panelState(d: Daemon): PanelState {
 		})),
 		watchers: s.watchers.list().map((w) => ({ id: w.id, name: w.name, target: w.target, every: w.every_minutes, error: w.last_error })),
 		events: s.db.all<{ at: number; kind: string; text: string }>("SELECT at, kind, text FROM events ORDER BY id DESC LIMIT 40"),
+		httpApprovals: s.cfg.channels.http?.allowApprovals === true,
 		observed: s.db.all<{ at: number; text: string }>("SELECT at, text FROM events WHERE kind = 'observe' AND at > ? ORDER BY id DESC LIMIT 20", s.clock.now() - 7 * 86_400_000),
 		model: model ? `${model.provider}/${model.id}` : null,
 		...{ tz },
@@ -133,6 +138,9 @@ export function panelRoutes(daemon: () => Daemon | undefined): Record<string, Ro
 			if (data === "pause" || data === "resume") {
 				d.s.db.setKv("paused", data === "pause");
 				return { body: { ok: true } };
+			}
+			if ((data === "mode:auto" || data === "mode:observe" || data === "mode:off") && !d.s.cfg.channels.http?.allowApprovals) {
+				return { status: 403, body: { error: "mode changes over HTTP are off; use /mode in your chat app" } };
 			}
 			if (data === "mode:off" || data === "mode:observe" || data === "mode:auto") {
 				d.s.cfg.proactive.mode = data.slice(5) as "off" | "observe" | "auto";
@@ -198,7 +206,7 @@ function render(s){
   h += '<h2>Attention budget</h2><div class="card"><div class="row"><span>Interrupts today</span><span class="r">'+b.interruptsUsed+' / '+b.interruptsMax+'</span></div><div class="meter"><i style="width:'+pct+'%"></i></div>'
     + '<div class="row"><span>Critical today</span><span class="r">'+b.criticalsUsed+' / '+b.criticalsMax+'</span></div><div class="row"><span>Waiting for the digest</span><span class="r">'+b.waiting+'</span></div></div>';
   if (s.waiting.length) h += '<div class="card">'+s.waiting.map(n => '<div class="row"><span>'+esc(n.text)+'</span><span class="r">'+esc(n.urgency)+' · '+esc(n.topic)+'</span></div>').join("")+'</div>';
-  if (s.mode === "observe" && s.observed.length) h += '<h2>Would have done (observe mode)</h2><div class="card">'+s.observed.map(o => '<div class="row"><span>'+esc(o.text.replace(/^would /,""))+'</span><span class="r">'+ago(o.at)+'</span></div>').join("")+'<button class="primary" onclick="act(\\'mode:auto\\')">Looks right: switch to auto</button></div>';
+  if (s.mode === "observe" && s.observed.length) h += '<h2>Would have done (observe mode)</h2><div class="card">'+s.observed.map(o => '<div class="row"><span>'+esc(o.text.replace(/^would /,""))+'</span><span class="r">'+ago(o.at)+'</span></div>').join("")+(s.httpApprovals ? '<button class="primary" onclick="act(\\'mode:auto\\')">Looks right: switch to auto</button>' : '<div class="detail">Looks right? Send /mode auto in your chat app.</div>')+'</div>';
   if (s.working.length) h += '<h2>Working</h2><div class="card">'+s.working.map(t => '<div class="row"><span>'+esc(t.title)+'</span><span class="r">'+esc(t.stage)+' · '+ago(t.updated)+'</span></div>').join("")+'</div>';
   if (s.jobs.length) h += '<h2>Schedule</h2><div class="card">'+s.jobs.map(j => '<div class="row"><span>'+esc(j.name)+(j.system?' <span class="chip">built in</span>':'')+'<div class="detail">'+esc(j.when)+' → '+esc(j.action)+(j.last?' · last: '+esc(j.last):'')+'</div></span><span class="r">'+when(j.next)+'</span></div>').join("")+'</div>';
   if (s.watchers.length) h += '<h2>Watching</h2><div class="card">'+s.watchers.map(w => '<div class="row"><span>'+esc(w.name)+'<div class="detail">'+esc(w.target)+(w.error?' · error: '+esc(w.error):'')+'</div></span><span class="r">every '+w.every+' min</span></div>').join("")+'</div>';

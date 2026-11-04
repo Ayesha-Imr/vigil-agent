@@ -96,7 +96,7 @@ export class Daemon {
 		const notifier = new Notifier({ db, clock, outbox, policy: () => governorPolicy(cfg), route });
 		const memory = new Memory(o.paths.memory, () => cfg.owner.timezone);
 		const writable = [o.paths.work, o.paths.memory, o.paths.skills, "/tmp"];
-		let gate = loadGatePolicy(o.paths.policy, writable);
+		let gate = loadGatePolicy(o.paths.policy, writable, o.paths.home);
 		const models = new ModelRouter(modelRuntime, () => cfg.models, clock);
 		await models.refresh().catch(() => {});
 		const s: Services = {
@@ -151,7 +151,7 @@ export class Daemon {
 		};
 		const d = new Daemon(s, o.channels, o.timers ?? true, o.log ?? ((l) => console.log(l)));
 		d.reloadPolicy = () => {
-			gate = loadGatePolicy(o.paths.policy, writable);
+			gate = loadGatePolicy(o.paths.policy, writable, o.paths.home);
 		};
 		return d;
 	}
@@ -402,6 +402,16 @@ export class Daemon {
 		};
 
 		if (msg.kind === "button") {
+			const [kind] = (msg.data ?? "").split(":");
+			if (msg.channel === "http" && (kind === "approve" || kind === "deny") && !s.cfg.channels.http?.allowApprovals) {
+				// Any process on this machine that finds the HTTP token could press this button, including
+				// the agent's own tools. Approvals come from a chat app where the owner's identity is
+				// checked, unless the owner opted in (for example with tools sandboxed away from the token).
+				s.db.event("gate.http-approval-refused", `refused ${kind} over HTTP; approve from a chat app or set channels.http.allowApprovals`);
+				done("dropped", "approvals over HTTP are off");
+				say("Approvals over the HTTP API are off. Use the buttons in Telegram/Discord, or set channels.http.allowApprovals.");
+				return;
+			}
 			done("done", this.handleButton(msg.data ?? "", say));
 			return;
 		}

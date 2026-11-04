@@ -26,7 +26,17 @@ export interface VigilConfig {
 		whatsapp?: { enabled: boolean };
 		ntfy?: { server: string; topic: string; token?: string };
 		/** `publicUrl` is where the phone can reach this server (for ntfy action buttons), if anywhere. */
-		http?: { port: number; token?: string; publicUrl?: string };
+		http?: {
+			port: number;
+			token?: string;
+			publicUrl?: string;
+			/**
+			 * Accept approve/deny presses from the HTTP API (panel, ntfy actions). Off by default: an
+			 * agent tool that finds the token on this machine could otherwise approve its own calls.
+			 * Turn it on only when tools cannot read vigil's config or environment (e.g. a sandbox).
+			 */
+			allowApprovals?: boolean;
+		};
 	};
 	/** Ordered `provider/model` candidates per role. The first one with credentials wins. */
 	models: Record<ModelRole, string[]>;
@@ -138,6 +148,7 @@ export function loadConfig(p: Paths = paths()): VigilConfig {
 	if (env.VIGIL_DISCORD_TOKEN) cfg.channels.discord = { ...cfg.channels.discord, token: env.VIGIL_DISCORD_TOKEN };
 	if (env.VIGIL_HTTP_TOKEN && cfg.channels.http) cfg.channels.http.token = env.VIGIL_HTTP_TOKEN;
 	if (env.VIGIL_NTFY_TOKEN && cfg.channels.ntfy) cfg.channels.ntfy.token = env.VIGIL_NTFY_TOKEN;
+	if (env.BRAVE_API_KEY) cfg.search = { ...cfg.search, apiKey: env.BRAVE_API_KEY };
 	validate(cfg);
 	return cfg;
 }
@@ -157,6 +168,20 @@ function validate(cfg: VigilConfig): void {
 export function saveConfig(cfg: VigilConfig, p: Paths = paths()): void {
 	mkdirSync(p.home, { recursive: true });
 	writeFileSync(p.config, `${JSON.stringify(cfg, null, 2)}\n`, { mode: 0o600 });
+}
+
+/** Environment variables that hold secrets: read once at startup, then removed from the process,
+ * so the shells the agent's tools start do not inherit them. */
+export const SECRET_ENV = ["VIGIL_TELEGRAM_TOKEN", "VIGIL_DISCORD_TOKEN", "VIGIL_HTTP_TOKEN", "VIGIL_NTFY_TOKEN", "BRAVE_API_KEY", "OPENCODE_API_KEY"];
+
+export function scrubSecretEnv(): Record<string, string> {
+	const taken: Record<string, string> = {};
+	for (const k of SECRET_ENV) {
+		const v = process.env[k];
+		if (v) taken[k] = v;
+		delete process.env[k];
+	}
+	return taken;
 }
 
 export function governorPolicy(cfg: VigilConfig): GovernorPolicy {

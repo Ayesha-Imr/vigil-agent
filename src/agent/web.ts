@@ -9,6 +9,8 @@ export interface SearchConfig {
 	/** "brave" needs BRAVE_API_KEY; "searxng" needs a URL; "duckduckgo" needs nothing. */
 	provider: "brave" | "searxng" | "duckduckgo";
 	url?: string;
+	/** Brave API key; taken from BRAVE_API_KEY at startup. */
+	apiKey?: string;
 }
 
 export interface SearchHit {
@@ -55,9 +57,9 @@ export function parseDuckDuckGo(html: string): SearchHit[] {
 
 export async function search(query: string, cfg: SearchConfig, signal?: AbortSignal): Promise<SearchHit[]> {
 	const sig = signal ?? AbortSignal.timeout(30_000);
-	if (cfg.provider === "brave" && process.env.BRAVE_API_KEY) {
+	if (cfg.provider === "brave" && cfg.apiKey) {
 		const res = await fetch(`https://api.search.brave.com/res/v1/web/search?count=8&q=${encodeURIComponent(query)}`, {
-			headers: { accept: "application/json", "x-subscription-token": process.env.BRAVE_API_KEY },
+			headers: { accept: "application/json", "x-subscription-token": cfg.apiKey },
 			signal: sig,
 		});
 		const data = (await res.json()) as { web?: { results?: { title: string; url: string; description?: string }[] } };

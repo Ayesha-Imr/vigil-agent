@@ -1,8 +1,9 @@
 // The approval gate: a pi extension that classifies every tool call by data-driven rules and
 // holds risky calls until the owner approves that exact call. Forbidden calls never run.
 
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, dirname, resolve } from "node:path";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { type Approvals, callHash } from "../core/approvals.ts";
 
@@ -38,7 +39,34 @@ export const DEFAULT_RULES: Rule[] = [
 	{ tool: "bash", match: String.raw`\b(npm|pnpm|yarn)\s+publish\b|\bgh\s+(repo\s+(delete|create)|release\s+create|pr\s+merge|secret)\b|\bdocker\s+push\b`, verdict: "risky", reason: "publishes or changes something outside" },
 	{ tool: "bash", match: String.raw`\bcrontab\s+-r\b|>\s*/etc/|\bchmod\s+-R\s+777\b`, verdict: "risky", reason: "changes system configuration" },
 	{ tool: "bash", match: String.raw`\b(sendmail|mail|mutt)\b.*@|\bssh\s+\S+@`, verdict: "risky", reason: "contacts another host or person" },
+	{ tool: "add_watcher", match: String.raw`"kind"\s*:\s*"command"`, verdict: "risky", reason: "runs a shell command on a schedule" },
 ];
+
+/**
+ * Rules that protect vigil's own state under its home directory: config and policy (they hold the
+ * HTTP token and the approval rules), the credentials, the database and the session transcripts.
+ * An agent that could read the token could approve its own calls; one that could edit the policy
+ * could widen its own permissions.
+ */
+export function homeRules(home: string): Rule[] {
+	const h = home.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	return [
+		{
+			tool: "*",
+			match: String.raw`${h}/(config\.json|policy\.json|pi/|sessions/|whatsapp-auth/)|\.vigil/(config\.json|policy\.json|pi/|sessions/|whatsapp-auth/)`,
+			verdict: "forbidden",
+			reason: "touches vigil's own configuration, credentials or transcripts",
+		},
+		{
+			// Best effort against `cd ~/.vigil && cat config.json`. A regex cannot follow every shell
+			// trick; the real boundary is that approvals do not come from the HTTP API by default.
+			tool: "bash",
+			match: String.raw`(\.vigil|${h})[\s\S]*\b(config\.json|policy\.json|auth\.json|sessions|whatsapp-auth)\b`,
+			verdict: "forbidden",
+			reason: "touches vigil's own configuration, credentials or transcripts",
+		},
+	];
+}
 
 const BUILTIN_TOOLS = new Set(["read", "bash", "edit", "write", "grep", "find", "ls", "codemode", "tool_search"]);
 const VIGIL_TOOLS = /^(notify|remember|recall|forget|spawn_ticket|ticket_\w+|schedule_job|list_jobs|cancel_job|add_watcher|list_watchers|remove_watcher|mute_topic|unmute_topic|report|ask_owner|triage_decide)$/;
@@ -46,7 +74,7 @@ const VIGIL_TOOLS = /^(notify|remember|recall|forget|spawn_ticket|ticket_\w+|sch
 const READ_ONLY = /^(get|list|read|search|fetch|query|find|lookup|view|describe|show|count|check)([_-]|[A-Z])/;
 const SIDE_EFFECT = /(send|create|delete|remove|update|post|write|cancel|pay|transfer|archive|move|reply|forward|invite|share|publish|purchase|order|book|submit|merge|close|trash)/i;
 
-export function loadGatePolicy(path: string, writableRoots: string[]): GatePolicy {
+export function loadGatePolicy(path: string, writableRoots: string[], home?: string): GatePolicy {
 	let rules: Rule[] = [];
 	if (existsSync(path)) {
 		const parsed = JSON.parse(readFileSync(path, "utf8")) as { rules?: Rule[]; writableRoots?: string[] };
@@ -54,7 +82,35 @@ export function loadGatePolicy(path: string, writableRoots: string[]): GatePolic
 		writableRoots = [...writableRoots, ...(parsed.writableRoots ?? [])];
 	}
 	for (const r of rules) new RegExp(r.match, r.flags ?? "i"); // Fail at startup, not mid-call, on a bad pattern.
-	return { rules: [...rules, ...DEFAULT_RULES], writableRoots: writableRoots.map((r) => resolve(r)) };
+	// Owner rules cannot loosen the protection of vigil's own state: those rules come first.
+	return { rules: [...(home ? homeRules(home) : []), ...rules, ...DEFAULT_RULES], writableRoots: writableRoots.map((r) => realOrSelf(resolve(r))) };
+}
+
+/** Resolve a tool path the way pi's write and edit tools do: `~` expands, a leading `@` is dropped. */
+export function resolveLikePi(p: string, cwd: string): string {
+	let path = p.replace(/[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, " ");
+	if (path.startsWith("@")) path = path.slice(1);
+	if (path === "~") path = homedir();
+	else if (path.startsWith("~/")) path = homedir() + path.slice(1);
+	return resolve(cwd, path);
+}
+
+/** Follow symlinks for the deepest part of the path that exists, so a link cannot leave a root. */
+function realOrSelf(abs: string): string {
+	let cur = abs;
+	const rest: string[] = [];
+	for (let i = 0; i < 64; i++) {
+		try {
+			const real = realpathSync(cur);
+			return rest.length ? resolve(real, ...rest.reverse()) : real;
+		} catch {
+			const parent = dirname(cur);
+			if (parent === cur) return abs;
+			rest.push(basename(cur));
+			cur = parent;
+		}
+	}
+	return abs;
 }
 
 /** The text a rule's regex is tested against. */
@@ -78,7 +134,7 @@ export function classify(policy: GatePolicy, tool: string, input: Record<string,
 	}
 	if (tool === "write" || tool === "edit") {
 		const p = typeof input.path === "string" ? input.path : typeof input.file_path === "string" ? input.file_path : "";
-		const abs = resolve(cwd, p);
+		const abs = realOrSelf(resolveLikePi(p, cwd));
 		if (!policy.writableRoots.some((root) => abs === root || abs.startsWith(`${root}/`))) {
 			return { verdict: "risky", reason: `writes outside vigil's directories (${abs})` };
 		}
