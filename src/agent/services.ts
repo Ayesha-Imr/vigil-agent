@@ -63,6 +63,8 @@ export function sendSolicited(
 		text,
 		buttons: opts.buttons,
 		replyTo: opts.replyTo,
+		// A question or result that has to go out during quiet hours arrives without a buzz.
+		silent: quiet && !opts.urgent,
 		ref,
 		orderKey: ref.kind === "ticket" ? `${ref.id}:${route.channel}:${route.conversation}` : undefined,
 	});

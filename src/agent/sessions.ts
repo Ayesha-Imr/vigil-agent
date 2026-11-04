@@ -91,6 +91,7 @@ export async function buildSession(s: Services, spec: SessionSpec): Promise<Buil
 						text,
 						buttons: [[{ data: `approve:${id}`, label: "Approve" }, { data: `deny:${id}`, label: "Deny" }]],
 						ref: { kind: "approval", id },
+						silent: s.notifier.budget().quietNow,
 					});
 				},
 				log: (text) => s.db.event("gate", `${requester}: ${text}`),

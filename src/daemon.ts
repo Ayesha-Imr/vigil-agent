@@ -394,9 +394,13 @@ export class Daemon {
 				return;
 			}
 		}
+		if (s.paused()) {
+			say("I'm paused, so I've noted this but won't act on it. /resume to continue.");
+		}
 		const context = ref?.kind === "notice" || ref?.kind === "digest" ? this.refText(msg) : "";
-		this.concierge.enqueue({ kind: "owner", channel: msg.channel, conversation: msg.conversation, externalId: msg.externalId, text: context + text, at: msg.at });
-		done("done", "to concierge");
+		// Stays 'processing' until the concierge has answered, so a crash in between replays it.
+		done("processing", "to concierge");
+		this.concierge.enqueue({ kind: "owner", channel: msg.channel, conversation: msg.conversation, externalId: msg.externalId, text: context + text, at: msg.at, triggerIds: [triggerId] });
 	}
 
 	private refText(msg: InboundMessage): string {
@@ -466,6 +470,7 @@ export class Daemon {
 			case "/resume":
 				s.db.setKv("paused", false);
 				this.workers.pump();
+				this.concierge.resume();
 				say("Resumed.");
 				return true;
 			case "/mode": {
@@ -582,7 +587,7 @@ export class Daemon {
 	/** Triggers stored but not processed before a crash are routed again. */
 	private async reprocessStuckTriggers(): Promise<void> {
 		const rows = this.s.db.all<{ id: number; payload: string }>(
-			"SELECT id, payload FROM triggers WHERE status = 'received' AND source NOT IN ('clock', 'watch') AND created_at > ? ORDER BY id",
+			"SELECT id, payload FROM triggers WHERE status IN ('received', 'processing') AND source NOT IN ('clock', 'watch') AND created_at > ? ORDER BY id",
 			this.s.clock.now() - DAY,
 		);
 		for (const r of rows) await this.route(JSON.parse(r.payload) as InboundMessage, r.id);

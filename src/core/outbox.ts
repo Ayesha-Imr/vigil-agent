@@ -17,6 +17,8 @@ export interface OutboxItem {
 	ref?: { kind: "ticket" | "notice" | "attention" | "approval" | "digest" | "reply"; id: string };
 	/** Messages with the same key keep their order. */
 	orderKey?: string;
+	/** Deliver without sound where the app supports it. */
+	silent?: boolean;
 }
 
 interface OutboxRow {
@@ -31,6 +33,7 @@ interface OutboxRow {
 	order_key: string | null;
 	status: string;
 	attempts: number;
+	silent: number;
 }
 
 /** After this many failed attempts a message stops holding back later ones with its order key. */
@@ -59,8 +62,8 @@ export class Outbox {
 			parts.map((text, i) => {
 				const last = i === parts.length - 1;
 				return this.db.run(
-					`INSERT INTO outbox (channel, conversation, text, buttons, reply_to, ref_kind, ref_id, order_key, next_attempt_at, created_at)
-					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					`INSERT INTO outbox (channel, conversation, text, buttons, reply_to, ref_kind, ref_id, order_key, next_attempt_at, created_at, silent)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 					item.channel,
 					item.conversation,
 					text,
@@ -71,6 +74,7 @@ export class Outbox {
 					orderKey,
 					now,
 					now,
+					item.silent ? 1 : 0,
 				).lastInsertRowid;
 			}),
 		);
@@ -121,6 +125,7 @@ export class Outbox {
 				text: row.text,
 				buttons: row.buttons ? (JSON.parse(row.buttons) as Button[][]) : undefined,
 				replyTo: row.reply_to ?? undefined,
+				silent: row.silent === 1,
 			});
 			const at = this.clock.now();
 			this.db.tx(() => {

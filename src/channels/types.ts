@@ -31,6 +31,8 @@ export interface OutboundMessage {
 	text: string;
 	buttons?: Button[][];
 	replyTo?: string;
+	/** Deliver without sound or vibration, where the app supports it (quiet hours). */
+	silent?: boolean;
 }
 
 export interface SendResult {

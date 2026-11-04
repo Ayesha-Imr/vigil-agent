@@ -249,4 +249,22 @@ describe("vigil end to end", () => {
 		expect(lastResult).toMatch(/not found|unknown|not available|Tool bash/i);
 		expect(h.channel.sent.length).toBe(0);
 	});
+
+	it("answers, after a restart, an owner message that was not answered before the crash", async () => {
+		h = await harness((ctx) => say(ctx.lastUser.includes("still there?") ? "Yes, back now." : "?"));
+		await h.daemon.stop();
+		const { Db } = await import("../src/store/db.ts");
+		const db = new Db(join(h.home, "vigil.db"));
+		const msg = { channel: "telegram", externalId: "42:99", senderId: "42", conversation: "42", kind: "message", text: "still there?", at: Date.now() };
+		db.run("INSERT INTO triggers (source, external_id, kind, strength, payload, status, created_at) VALUES ('telegram', '42:99', 'message', 'explicit', ?, 'processing', ?)", JSON.stringify(msg), h.clock.now());
+		db.close();
+		const d2 = await h.restart();
+		for (let i = 0; i < 50 && !h.channel.sent.length; i++) {
+			await new Promise((r) => setTimeout(r, 20));
+			await d2.s.outbox.deliverDue();
+		}
+		expect(h.channel.texts()).toEqual(["Yes, back now."]);
+		expect(d2.s.db.get<{ status: string }>("SELECT status FROM triggers WHERE external_id = '42:99'")?.status).toBe("done");
+		await d2.stop();
+	});
 });

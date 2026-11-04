@@ -159,6 +159,7 @@ const MIGRATIONS: string[] = [
 		data TEXT
 	);
 	`,
+	`ALTER TABLE outbox ADD COLUMN silent INTEGER NOT NULL DEFAULT 0;`,
 ];
 
 export type Row = Record<string, SQLInputValue>;

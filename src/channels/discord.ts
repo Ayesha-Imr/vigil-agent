@@ -10,6 +10,7 @@ import {
 	Events,
 	GatewayIntentBits,
 	type Message,
+	MessageFlags,
 	type MessageReaction,
 	type PartialMessageReaction,
 	Partials,
@@ -154,6 +155,7 @@ export class DiscordChannel implements Channel {
 							? { messageReference: replyTo.messageId, failIfNotExists: false }
 							: undefined,
 					allowedMentions: { parse: [] },
+					flags: msg.silent ? MessageFlags.SuppressNotifications : undefined,
 				});
 			}
 			if (!last) throw new Error("nothing sent");

@@ -86,6 +86,7 @@ export class TelegramChannel implements Channel {
 				reply_parameters:
 					reply && reply.chat === chatId ? { message_id: reply.id, allow_sending_without_reply: true } : undefined,
 				link_preview_options: { is_disabled: true },
+				disable_notification: msg.silent || undefined,
 			});
 			return { externalId: `${sent.chat.id}:${sent.message_id}` };
 		} catch (err) {

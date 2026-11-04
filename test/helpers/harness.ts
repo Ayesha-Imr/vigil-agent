@@ -72,6 +72,8 @@ export interface Harness {
 	home: string;
 	calls: Ctx[];
 	settle: () => Promise<void>;
+	/** Start another daemon on the same home, as after a restart. */
+	restart: () => Promise<Daemon>;
 }
 
 export async function harness(brain: Brain, tweak: (cfg: VigilConfig) => void = () => {}, opts: { fetcher?: (url: string) => Promise<string> } = {}): Promise<Harness> {
@@ -133,7 +135,12 @@ export async function harness(brain: Brain, tweak: (cfg: VigilConfig) => void = 
 			}
 		}
 	};
-	return { daemon, channel, clock, cfg, home, calls, settle };
+	const restart = async () => {
+		const d2 = await Daemon.create({ paths: p, cfg, channels: new Map([["telegram", channel]]), clock, modelRuntime: runtime, timers: false, log: () => {} });
+		await d2.start();
+		return d2;
+	};
+	return { daemon, channel, clock, cfg, home, calls, settle, restart };
 }
 
 export function isWorker(ctx: Ctx): boolean {

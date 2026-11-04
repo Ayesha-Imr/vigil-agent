@@ -14,7 +14,7 @@ import { buildSession, promptWithFallback } from "./sessions.ts";
 import { conciergeTools } from "./tools.ts";
 
 export type ConciergeInput =
-	| { kind: "owner"; channel: ChannelId; conversation: string; externalId: string; text: string; at: number }
+	| { kind: "owner"; channel: ChannelId; conversation: string; externalId: string; text: string; at: number; triggerIds?: number[] }
 	| { kind: "system"; tag: string; text: string; done?: (result: string) => void };
 
 const SESSION_KEY = "concierge.session";
@@ -61,6 +61,11 @@ export class Concierge {
 		void this.pump();
 	}
 
+	/** After /resume: handle what queued up while paused. */
+	resume(): void {
+		void this.pump();
+	}
+
 	pending(): number {
 		return this.queue.length + (this.busy ? 1 : 0);
 	}
@@ -92,12 +97,14 @@ export class Concierge {
 		const first = this.queue.shift()!;
 		if (first.kind !== "owner") return first;
 		const parts = [this.tag(first)];
+		const triggerIds = [...(first.triggerIds ?? [])];
 		let last = first;
 		while (this.queue[0]?.kind === "owner" && (this.queue[0] as typeof first).conversation === first.conversation) {
 			last = this.queue.shift() as typeof first;
 			parts.push(this.tag(last));
+			triggerIds.push(...(last.triggerIds ?? []));
 		}
-		return { ...last, text: parts.join("\n") };
+		return { ...last, text: parts.join("\n"), triggerIds };
 	}
 
 	private async handle(input: ConciergeInput): Promise<void> {
@@ -107,7 +114,10 @@ export class Concierge {
 		} catch (err) {
 			const msg = (err as Error).message;
 			this.s.db.event("concierge.error", msg);
-			if (input.kind === "owner") this.reply(input, `I can't think right now: ${msg}`);
+			if (input.kind === "owner") {
+				this.reply(input, `I can't think right now: ${msg}`);
+				this.markDone(input.triggerIds);
+			}
 			if (input.kind === "system") input.done?.(`error: ${msg}`);
 			return;
 		}
@@ -124,6 +134,7 @@ export class Concierge {
 			const out = r.error && !r.text ? `Something went wrong on my side (${r.error.slice(0, 200)}). Try again in a bit.` : r.text;
 			if (out && !SILENT.test(out)) this.reply(input, out);
 			this.s.db.setKv(SESSION_KEY, session.sessionFile ?? null);
+			this.markDone(input.triggerIds);
 			return;
 		}
 
@@ -131,6 +142,13 @@ export class Concierge {
 		const r = await promptWithFallback(this.s, session, "concierge", `[${input.tag}] ${input.text}`);
 		this.s.db.setKv(SESSION_KEY, session.sessionFile ?? null);
 		input.done?.(r.error ? `error: ${r.error}` : r.text.slice(0, 500));
+	}
+
+	/** An owner message counts as handled only once it was answered; until then a restart replays it. */
+	private markDone(ids: number[] | undefined): void {
+		for (const id of ids ?? []) {
+			this.s.db.run("UPDATE triggers SET status = 'done', processed_at = ? WHERE id = ?", this.s.clock.now(), id);
+		}
 	}
 
 	private reply(input: Extract<ConciergeInput, { kind: "owner" }>, text: string): void {
