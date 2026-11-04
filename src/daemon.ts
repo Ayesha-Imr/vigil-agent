@@ -788,6 +788,11 @@ export class Daemon {
 		if (cooling.length) lines.push(`models cooling down: ${cooling.map((c) => c.model).join(", ")}`);
 		const model = s.models.pick("concierge");
 		lines.push(`model: ${model ? `${model.provider}/${model.id}` : "none — /login codex or /login opencode <key>"}`);
+		const usage = s.db.getKv<{ day: string; roles: Record<string, number> }>("usage");
+		if (usage && usage.day === localDate(s.clock.now(), s.cfg.owner.timezone)) {
+			const k = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
+			lines.push(`tokens today: ${Object.entries(usage.roles).map(([r, n]) => `${r} ${k(n)}`).join(" · ")}`);
+		}
 		return lines.join("\n");
 	}
 

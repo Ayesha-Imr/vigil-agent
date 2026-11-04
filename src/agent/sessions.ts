@@ -186,6 +186,17 @@ export interface RunResult {
 export async function promptWithFallback(s: Services, session: AgentSession, role: ModelRole, text: string, images?: ImageContent[]): Promise<RunResult> {
 	const tried = new Set<string>();
 	let input = text;
+	const before = session.getSessionStats().tokens.total;
+	// Tokens per role per local day, for quota awareness on flat-fee plans (/status and the panel).
+	const recordUsage = () => {
+		const used = Math.max(0, session.getSessionStats().tokens.total - before);
+		if (!used) return;
+		const day = localDate(s.clock.now(), s.cfg.owner.timezone);
+		const usage = s.db.getKv<{ day: string; roles: Record<string, number> }>("usage") ?? { day, roles: {} };
+		const today = usage.day === day ? usage : { day, roles: {} };
+		today.roles[role] = (today.roles[role] ?? 0) + used;
+		s.db.setKv("usage", today);
+	};
 	for (let attempt = 0; attempt < 4; attempt++) {
 		const model = session.model as AnyModel | undefined;
 		if (model) tried.add(key(model));
@@ -201,6 +212,7 @@ export async function promptWithFallback(s: Services, session: AgentSession, rol
 		}
 		if (!error) {
 			s.models.succeeded();
+			recordUsage();
 			return { text: session.getLastAssistantText() ?? "", model: model ? key(model) : "?" };
 		}
 		const verdict = model ? s.models.failed(model, error) : { fallBack: false, kind: "other" as const };
