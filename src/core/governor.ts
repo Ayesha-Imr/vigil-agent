@@ -354,7 +354,7 @@ export function budget(state: GovernorState, now: number, policy: GovernorPolicy
 /** Render a digest as one message. */
 export function renderDigest(notices: Notice[]): string {
 	if (notices.length === 1) return notices[0].text;
-	const lines = [`While you were away (${notices.length}):`];
+	const lines = [`Since the last digest (${notices.length}):`];
 	for (const n of notices) {
 		const mark = n.effective === "high" || n.effective === "critical" ? "!" : "-";
 		lines.push(`${mark} ${n.text}`);
