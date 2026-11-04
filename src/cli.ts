@@ -16,6 +16,7 @@ import { type ChannelId, defaultConfig, loadConfig, type ModelRole, type Paths, 
 import { systemClock } from "./core/time.ts";
 import { Daemon } from "./daemon.ts";
 import { panelRoutes } from "./panel/panel.ts";
+import { runEvals } from "./evals.ts";
 import { recordedNotices, renderReport, simulate, syntheticWeek } from "./simulate.ts";
 
 const USAGE = `vigil — an always-on personal agent on pi
@@ -30,6 +31,8 @@ const USAGE = `vigil — an always-on personal agent on pi
   vigil doctor               check the setup
   vigil simulate [--max N] [--gap MIN] [--quiet HH:MM-HH:MM] [--synthetic]
                              replay your last week of notices under another attention policy
+  vigil eval [--model provider/id] [names...]
+                             scripted scenarios against your real models (uses your login)
   vigil service              print a systemd unit for running vigil always
   vigil verify               run the formal verification (needs Java)
 
@@ -304,6 +307,16 @@ async function main(): Promise<void> {
 			return service(p);
 		case "simulate":
 			return simulateCmd(p, process.argv.slice(3));
+		case "eval": {
+			const argv = process.argv.slice(3);
+			const mi = argv.indexOf("--model");
+			const model = mi === -1 ? undefined : argv[mi + 1];
+			const only = argv.filter((a, i) => !a.startsWith("--") && (mi === -1 || i !== mi + 1));
+			const results = await runEvals(p, { model, only, log: (l) => console.log(l) });
+			const passed = results.filter((r) => r.passed).length;
+			console.log(`\n${passed}/${results.length} passed${model ? ` with ${model}` : ""}.`);
+			process.exit(passed === results.length ? 0 : 1);
+		}
 		case "verify":
 			return verify();
 		default:
