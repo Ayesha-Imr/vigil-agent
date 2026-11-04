@@ -10,7 +10,7 @@ describe("vigil simulate", () => {
 		const stream = syntheticWeek(Date.UTC(2026, 10, 1));
 		const days = simulate(stream, policy);
 		expect(days.reduce((a, d) => a + d.offered, 0)).toBe(stream.length);
-		for (const d of days) expect(d.buzzes - d.critical).toBeLessThanOrEqual(policy.maxInterruptsPerDay + 1); // +1: rolling 24 h windows straddle calendar days
+		for (const d of days) expect(d.buzzes - d.critical).toBeLessThanOrEqual(policy.maxInterruptsPerDay); // a UTC calendar day is one 24 h window
 		const strict = simulate(stream, { ...policy, maxInterruptsPerDay: 0, criticalPerDay: 0 });
 		expect(strict.reduce((a, d) => a + d.buzzes, 0)).toBe(0);
 	});
