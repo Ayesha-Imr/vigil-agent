@@ -57,10 +57,10 @@ That rule is enforced in code, not only in prompts:
 ## Try it in 10 seconds
 
 ```bash
-npx --yes github:Ayesha-Imr/vigil-agent demo
+git clone https://github.com/Ayesha-Imr/vigil-agent && cd vigil-agent && npm ci --ignore-scripts && npm run build && node dist/cli.js demo
 ```
 
-Or, from a clone: `npm ci --ignore-scripts && node --experimental-strip-types src/cli.ts demo`. It
+It
 runs a day with vigil in your terminal: a reminder, background research, an approval for a `git
 push`, and a night-time notice held for the morning. The daemon, governor, scheduler, tools and
 approval gate are all real; only the model is scripted. No accounts needed.
