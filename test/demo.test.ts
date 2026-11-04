@@ -17,7 +17,7 @@ describe("vigil demo", () => {
 		const out = lines.join("\n");
 		expect(out).toContain("⏰ Call the bank");
 		expect(out).toContain("✅ Compare e-ink tablets");
-		expect(out).toMatch(/Approve\? .* pushes to a remote/);
+		expect(out).toMatch(/Approve\?.*pushes to a remote/);
 		expect(out.indexOf("tap [Approve]")).toBeLessThan(out.indexOf("Pushed your reading notes"));
 		expect(out).toContain("(nothing sent: quiet hours)");
 		expect(out).toMatch(/08:00 .*Boox Note Air4 C dropped/);
