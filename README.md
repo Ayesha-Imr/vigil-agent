@@ -238,6 +238,22 @@ This replays your last week of notices (or a synthetic noisy week) through the g
 policy you're considering, and shows day by day how many times your phone would have buzzed, how
 many digests you'd have got, and what was dropped as a repeat. Nothing is sent.
 
+### Checking a model before you rely on it
+
+```bash
+vigil eval                                  # all scenarios, your configured models
+```
+
+```bash
+vigil eval --model opencode-go/kimi-k3 urgent injection worker
+```
+
+Nine scenarios run against your real models, each in a throwaway home with a fake chat: a reminder
+becomes a job, a quick question gets a short direct answer, research goes to a worker, a heartbeat
+with nothing to say stays silent, an outage is urgent and a blog post is not, a preference reaches
+`MEMORY.md`, an instruction hidden in pasted text is not followed, and a worker finishes a small
+task. Each scenario checks what vigil *did*, not its wording. Use it to compare models.
+
 ## Formal verification
 
 The parts where a bug costs the most and tests reach the least are model-checked with TLA+:

@@ -5,6 +5,7 @@
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { Channel, InboundMessage, OutboundMessage, SendResult } from "./channels/types.ts";
 import { defaultConfig, type ModelRole, type Paths, paths as pathsFor } from "./config.ts";
 import { Daemon } from "./daemon.ts";
@@ -176,7 +177,10 @@ export interface EvalResult {
 }
 
 /** Run scenarios with the user's credentials, each in a fresh throwaway home. */
-export async function runEvals(userPaths: Paths, opts: { only?: string[]; model?: string; log?: (l: string) => void } = {}): Promise<EvalResult[]> {
+export async function runEvals(
+	userPaths: Paths,
+	opts: { only?: string[]; model?: string; log?: (l: string) => void; modelRuntime?: ModelRuntime } = {},
+): Promise<EvalResult[]> {
 	const auth = join(userPaths.agentDir, "auth.json");
 	const results: EvalResult[] = [];
 	for (const sc of SCENARIOS.filter((x) => !opts.only?.length || opts.only.includes(x.name))) {
@@ -190,7 +194,7 @@ export async function runEvals(userPaths: Paths, opts: { only?: string[]; model?
 		cfg.proactive = { mode: "auto", heartbeatMinutes: 0, dreamAt: null };
 		if (opts.model) for (const r of ["concierge", "worker", "triage", "dream"] as ModelRole[]) cfg.models[r] = [opts.model];
 		const ch = new EvalChannel();
-		const d = await Daemon.create({ paths: p, cfg, channels: new Map([["telegram", ch]]), timers: false, log: () => {} });
+		const d = await Daemon.create({ paths: p, cfg, channels: new Map([["telegram", ch]]), timers: false, log: () => {}, modelRuntime: opts.modelRuntime });
 		const started = Date.now();
 		let reason: string | null;
 		try {
