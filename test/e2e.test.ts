@@ -433,4 +433,20 @@ describe("vigil end to end", () => {
 		const again = h.daemon.s.notifier.notify({ urgency: "high", topic: "ci", text: "CI is still red." });
 		expect(again.decision).toBe("drop:muted");
 	});
+
+	it("explains recent attention decisions with /why", async () => {
+		h = await harness(() => say("?"), (c) => {
+			c.attention.quietHours = null;
+		});
+		h.daemon.s.notifier.notify({ urgency: "high", topic: "ci", text: "CI is red." });
+		h.daemon.s.notifier.notify({ urgency: "low", topic: "arxiv", text: "New paper." });
+		h.daemon.s.notifier.notify({ urgency: "high", topic: "ci", text: "CI is red." });
+		await h.channel.receive("/why");
+		await h.settle();
+		const why = h.channel.texts().at(-1)!;
+		expect(why).toContain("Budget: 1/3");
+		expect(why).toContain("sent now [high/ci]");
+		expect(why).toContain("saved for the digest [low/arxiv]");
+		expect(why).toContain("dropped: you already had this news");
+	});
 });

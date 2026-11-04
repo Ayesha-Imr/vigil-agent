@@ -43,7 +43,7 @@ That rule is enforced in code, not only in prompts:
 
 | | |
 | --- | --- |
-| **Chat from your phone** | Telegram (recommended), Discord DMs, WhatsApp (unofficial, opt-in), ntfy push, an HTTP API for iOS Shortcuts, and a terminal. One conversation across all of them |
+| **Chat from your phone** | Telegram (recommended), Discord DMs, Slack DMs, Signal (via signal-cli), WhatsApp (unofficial, opt-in), ntfy push, an HTTP API for iOS Shortcuts, and a terminal. One conversation across all of them |
 | **Background work** | Longer tasks become *tickets*: each gets its own pi session, its own directory and the full coding toolset. Workers report back when there's a result, a question, or a blocker. Reply to a result to continue that task |
 | **Asks, not guesses** | A worker that needs a decision asks one question with buttons, then waits |
 | **Schedules** | "Remind me at 5", "every weekday at 8:30 brief me", "every Sunday clean up my downloads". Cron with your time zone; missed runs during downtime fold into one |
@@ -100,6 +100,31 @@ Then message your bot. `/help` lists the commands.
 Create an application at <https://discord.com/developers>, add a bot, enable the **Message Content**
 intent, invite it to a server you share, and copy your user id (Developer Mode → right-click
 yourself → Copy User ID). vigil talks to you in DMs.
+
+### Slack
+
+vigil uses Socket Mode, so no public URL is needed. At <https://api.slack.com/apps> create an app,
+then: turn on **Socket Mode** and make an app-level token with `connections:write` (`xapp-…`); add
+the bot scopes `chat:write`, `im:history`, `im:read`, `im:write`, `reactions:read`, `files:read` and
+`users:read`; under **Event Subscriptions** subscribe to the bot events `message.im` and
+`reaction_added`; turn **Interactivity** on (no URL needed with Socket Mode); under **App Home**
+allow users to send messages in the Messages tab. Install it to your workspace, copy the bot token
+(`xoxb-…`), and give both tokens to `vigil init` (or `VIGIL_SLACK_BOT_TOKEN` and
+`VIGIL_SLACK_APP_TOKEN`). Your member id (`U…`, from your profile → ⋮ → Copy member ID) goes in
+`owner.identities.slack`. Slack treats a leading `/` as a slash command, so to pair or use a
+command, type a space first: ` /pair 482913`. Buttons are Block Kit buttons; replies to a message
+go in its thread.
+
+### Signal
+
+vigil talks to a [signal-cli](https://github.com/AsamK/signal-cli) daemon, which you install and run
+yourself. signal-cli is unofficial but speaks the real Signal protocol. Give vigil its own Signal
+account (a second number): link signal-cli as a secondary device of the phone that holds it
+(`signal-cli link -n vigil`, scan the QR code under Settings → Linked devices) or register the
+number directly with signal-cli. Then run `signal-cli -a +15551234567 daemon --http 127.0.0.1:8080`
+(0.13 or newer) and set `channels.signal` to `{ "url": "http://127.0.0.1:8080", "account":
+"+15551234567" }` and your own number (E.164, `+…`) in `owner.identities.signal`. Like WhatsApp,
+choices come as a numbered list and you reply with a digit.
 
 ### WhatsApp (read this first)
 
@@ -183,6 +208,7 @@ useful phrasings:
 | `/tickets`, `/stop <id>` | background work |
 | `/digest` | what's waiting for the digest, now |
 | `/jobs`, `/memory` | what's scheduled; what vigil remembers about you |
+| `/why` | the attention governor's recent decisions, and why |
 | `/mute <topic> [hours]`, `/unmute <topic>` | silence a topic |
 | `/mode off\|observe\|auto` | proactive work from watchers |
 | `/pause`, `/resume` | kill switch: keep listening, start and send nothing new |
@@ -195,7 +221,7 @@ Commands work without a model, so they still work when a provider is down.
 
 ```mermaid
 flowchart LR
-  CH[Telegram / Discord / WhatsApp / HTTP / CLI] -->|message| G[Gate: owner only]
+  CH[Telegram / Discord / Slack / Signal / WhatsApp / HTTP / CLI] -->|message| G[Gate: owner only]
   CL[Scheduler + heartbeat] -->|job| C
   W[Watchers] -->|real change| T[Triage, cheap model, no tools]
   G --> C[Concierge: one pi session]
@@ -289,6 +315,8 @@ verification skills, so they can do the same for your code.
   },
   "channels": {
     "telegram": { "token": "…" },                    // or VIGIL_TELEGRAM_TOKEN
+    "slack": { "botToken": "xoxb-…", "appToken": "xapp-…" }, // or VIGIL_SLACK_BOT_TOKEN / _APP_TOKEN
+    "signal": { "url": "http://127.0.0.1:8080", "account": "+15551234567" }, // a signal-cli daemon
     "http": { "port": 7777, "token": "…" }           // the panel and API
   },
   "models": {                                         // "provider/*" = any model of that provider

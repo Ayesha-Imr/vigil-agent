@@ -645,6 +645,28 @@ export class Daemon {
 				say(w.length ? w.map((n) => `- ${n.text}`).join("\n") : "Nothing waiting.");
 				return true;
 			}
+			case "/why": {
+				// The governor's recent decisions, in words: why something was or was not sent.
+				const tz = s.cfg.owner.timezone;
+				const said: Record<string, string> = {
+					deliver: "sent now",
+					hold: "held: quiet hours",
+					digest: "saved for the digest",
+					"drop:duplicate": "dropped: you already had this news",
+					"drop:muted": "dropped: topic muted",
+				};
+				const rows = s.db.all<{ created_at: number; effective: string; topic: string; text: string; decision: string; status: string }>(
+					"SELECT created_at, effective, topic, text, decision, status FROM notices ORDER BY created_at DESC LIMIT 8",
+				);
+				const b = s.notifier.budget();
+				const lines = rows.map((r) => {
+					const hhmm = new Date(r.created_at).toLocaleTimeString("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit" });
+					const later = r.decision !== "deliver" && r.status === "digested" ? " (then sent in a digest)" : r.status === "expired" ? " (then expired)" : "";
+					return `${hhmm} ${said[r.decision] ?? r.decision}${later} [${r.effective}/${r.topic}] ${r.text.slice(0, 70)}`;
+				});
+				say([`Budget: ${b.interruptsUsed}/${b.interruptsMax} interruptions used in the last 24 h${b.quietNow ? "; quiet hours now" : ""}.`, ...lines].join("\n") || "Nothing decided yet.");
+				return true;
+			}
 			case "/memory": {
 				const text = s.memory.core().replace(/^# Memory[\s\S]*?(?=## )/, "").trim();
 				say(text.length > 3500 ? `${text.slice(0, 3500)}\n…` : text || "Nothing remembered yet.");
@@ -769,6 +791,7 @@ const HELP = `vigil commands
 /status — what is going on
 /tickets — open background work · /stop <id>
 /jobs — what is scheduled · /memory — what vigil remembers
+/why — why recent things were or weren't sent
 /digest — what is waiting for the digest
 /mute <topic> [hours] · /unmute <topic>
 /mode off|observe|auto — proactive work
