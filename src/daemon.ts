@@ -242,13 +242,17 @@ export class Daemon {
 	private ensureSystemJobs(): void {
 		const p = this.s.cfg.proactive;
 		this.s.scheduler.ensure({ name: REVIEW_JOB, kind: "cron", spec: "0 18 * * 0", prompt: "built in", action: "agent" });
+		const off = (name: string) => {
+			const job = this.s.scheduler.list().find((j) => j.created_by === "system" && j.name === name);
+			if (job?.enabled) this.s.scheduler.setEnabled(job.id, false);
+		};
 		if (p.heartbeatMinutes > 0) {
 			this.s.scheduler.ensure({ name: HEARTBEAT_JOB, kind: "every", spec: String(p.heartbeatMinutes), prompt: "built in", action: "agent" });
-		}
+		} else off(HEARTBEAT_JOB);
 		if (p.dreamAt) {
 			const [h, m] = p.dreamAt.split(":").map(Number);
 			this.s.scheduler.ensure({ name: DREAM_JOB, kind: "cron", spec: `${m} ${h} * * *`, prompt: "built in", action: "agent" });
-		}
+		} else off(DREAM_JOB);
 	}
 
 	async runJob(run: JobRun): Promise<void> {
