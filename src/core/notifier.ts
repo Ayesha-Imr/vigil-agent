@@ -21,6 +21,7 @@ import {
 	unmute,
 	waiting,
 } from "./governor.ts";
+import { checkSend } from "./invariants.ts";
 import type { Outbox } from "./outbox.ts";
 import { type Clock, DAY } from "./time.ts";
 
@@ -59,9 +60,12 @@ export class Notifier {
 		const now = this.clock.now();
 		return this.db.tx(() => {
 			const r = offer(this.state, { ...input, id: input.id ?? `nt_${randomUUID().slice(0, 8)}` }, now, this.policy());
+			// Guard against the recorded history before this notice is recorded as delivered.
+			const violation = r.deliverNow ? checkSend(this.db, r.notice, now, this.policy(), this.state.mutes, false) : undefined;
 			this.commit(r.state);
 			this.record(r.notice);
-			if (r.deliverNow) this.send(r.notice.text, { kind: "notice", id: r.notice.id }, r.notice.effective === "critical");
+			if (violation) this.db.event("invariant.violation", `${violation.rule}: ${violation.detail}; notice ${r.notice.id} not sent`);
+			else if (r.deliverNow) this.send(r.notice.text, { kind: "notice", id: r.notice.id }, r.notice.effective === "critical");
 			this.db.event("notice", `${r.notice.decision}: [${r.notice.effective}/${r.notice.topic}] ${r.notice.text.slice(0, 120)}`);
 			return r.notice;
 		});
@@ -74,7 +78,10 @@ export class Notifier {
 			const r = tick(this.state, now, this.policy());
 			this.commit(r.state);
 			for (const n of r.expired) this.record(n);
-			if (r.digest.length) {
+			const quietViolation = r.digest.length ? checkSend(this.db, r.digest[0], now, this.policy(), {}, true) : undefined;
+			if (quietViolation) {
+				this.db.event("invariant.violation", `${quietViolation.rule}: ${quietViolation.detail}; digest not sent`);
+			} else if (r.digest.length) {
 				for (const n of r.digest) this.record(n);
 				this.send(renderDigest(r.digest), { kind: "digest", id: r.digest.map((n) => n.id).join(",") }, false);
 				this.db.event("digest", `sent digest of ${r.digest.length}`);
