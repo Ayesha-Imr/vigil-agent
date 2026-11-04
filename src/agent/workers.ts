@@ -47,6 +47,7 @@ export class WorkerPool {
 			if (this.running.size >= limit) continue;
 			const run = this.run(t).finally(() => {
 				this.running.delete(t.id);
+				this.dispose(t.id);
 				this.pump();
 			});
 			this.running.set(t.id, run);
@@ -130,7 +131,9 @@ export class WorkerPool {
 			// A turn that ended without a final report waits for a trigger (dsh-superagent's rule).
 			this.s.tickets.report(t.id, "waiting", "ended a turn without a final report");
 		}
-		if (now.status === "ended") this.dispose(t.id);
+		// Sessions are on disk; keep none in memory between runs, so many idle tickets cost nothing.
+		// The next input resumes the session from its file.
+		this.dispose(t.id);
 	}
 
 	/** After a restart: tickets that were mid-turn get a recovery note and run again. */
