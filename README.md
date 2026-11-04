@@ -311,8 +311,12 @@ verification skills, so they can do the same for your code.
   any rule you add. Secret environment variables are removed from the process after startup, so
   the shells the agent runs don't inherit them.
 - `web_fetch` refuses loopback, private and cloud-metadata addresses on every redirect hop.
-- The approval gate is a guard rail, not a sandbox: a determined program can find a way around a
-  regex. For real isolation, run vigil in a container or VM.
+- **Shell sandbox.** When [bubblewrap](https://github.com/containers/bubblewrap) is installed
+  (`apt install bubblewrap`), every command the agent runs gets a read-only system, with vigil's
+  home, `~/.ssh`, `~/.gnupg` and `~/.pi` hidden, and only its work directories and `/tmp` writable.
+  `vigil doctor` says whether it's active. The approval gate's regexes are a second layer on top:
+  without the sandbox they are a guard rail, not a boundary, since a determined program can find a
+  way around a regex.
 
 ## Development
 

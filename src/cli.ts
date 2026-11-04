@@ -10,6 +10,7 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { ModelRouter } from "./agent/models.ts";
+import { bwrapWorks } from "./agent/sandbox.ts";
 import { createChannels } from "./channels/index.ts";
 import { type ChannelId, defaultConfig, loadConfig, type ModelRole, type Paths, paths, saveConfig, scrubSecretEnv, type VigilConfig } from "./config.ts";
 import { systemClock } from "./core/time.ts";
@@ -171,6 +172,7 @@ async function doctor(p: Paths): Promise<void> {
 		const m = router.pick(role);
 		ok(Boolean(m), `${role} model: ${m ? `${m.provider}/${m.id}` : "none"}`, "vigil login codex, or vigil login opencode");
 	}
+	ok(bwrapWorks() || cfg.sandbox === "off", `shell sandbox: ${bwrapWorks() ? (cfg.sandbox === "off" ? "available but off" : "bubblewrap active") : "not available"}`, "apt install bubblewrap (strongly recommended)");
 	let java = false;
 	try {
 		execFileSync("java", ["-version"], { stdio: "ignore" });

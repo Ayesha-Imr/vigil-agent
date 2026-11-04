@@ -3,7 +3,7 @@
 FROM node:22-bookworm-slim
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git ca-certificates curl ripgrep python3 openjdk-17-jre-headless \
+ && apt-get install -y --no-install-recommends git ca-certificates curl ripgrep python3 bubblewrap openjdk-17-jre-headless \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/vigil

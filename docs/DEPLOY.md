@@ -24,7 +24,7 @@ curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bas
 Optional, for workers and for `vigil verify`:
 
 ```bash
-sudo apt-get install -y git ripgrep openjdk-17-jre-headless
+sudo apt-get install -y git ripgrep bubblewrap openjdk-17-jre-headless
 ```
 
 ## 2. Install vigil
