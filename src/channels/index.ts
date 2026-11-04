@@ -5,6 +5,8 @@ import { CliChannel, type CliOptions } from "./cli.ts";
 import { DiscordChannel } from "./discord.ts";
 import { HttpChannel, type RouteHandler } from "./http.ts";
 import { NtfyChannel } from "./ntfy.ts";
+import { SignalChannel } from "./signal.ts";
+import { SlackChannel } from "./slack.ts";
 import { TelegramChannel } from "./telegram.ts";
 import type { Channel } from "./types.ts";
 import { type Log, stderrLog } from "./util.ts";
@@ -45,6 +47,24 @@ export function createChannels(cfg: VigilConfig, paths: Paths, opts: CreateChann
 			out.set("discord", new DiscordChannel({ token: ch.discord.token, ownerUserId: ids.discord?.[0], log }));
 			ownerNote("discord");
 		} else log("channels: discord skipped: no token (set channels.discord.token or VIGIL_DISCORD_TOKEN)");
+	}
+
+	if (ch.slack) {
+		const { botToken, appToken } = ch.slack;
+		if (botToken && appToken) {
+			out.set("slack", new SlackChannel({ botToken, appToken, ownerUserId: ids.slack?.[0], log }));
+			ownerNote("slack");
+		} else {
+			log("channels: slack skipped: needs a bot token and an app token (set channels.slack.botToken and appToken, or VIGIL_SLACK_BOT_TOKEN and VIGIL_SLACK_APP_TOKEN)");
+		}
+	}
+
+	if (ch.signal) {
+		if (ch.signal.url && ch.signal.account) {
+			log("channels: signal talks to a signal-cli daemon (unofficial client, real Signal protocol); install, link and run it separately");
+			out.set("signal", new SignalChannel({ url: ch.signal.url, account: ch.signal.account, ownerNumbers: ids.signal, log }));
+			ownerNote("signal");
+		} else log("channels: signal skipped: channels.signal needs url (the signal-cli daemon, e.g. http://127.0.0.1:8080) and account (its number)");
 	}
 
 	if (ch.whatsapp?.enabled) {
@@ -92,5 +112,7 @@ export { CliChannel } from "./cli.ts";
 export { DiscordChannel } from "./discord.ts";
 export { HttpChannel, HttpServer } from "./http.ts";
 export { NtfyChannel } from "./ntfy.ts";
+export { SignalChannel } from "./signal.ts";
+export { SlackChannel } from "./slack.ts";
 export { TelegramChannel } from "./telegram.ts";
 export { WhatsAppChannel } from "./whatsapp.ts";

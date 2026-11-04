@@ -43,6 +43,9 @@ You will need:
 
 - **Telegram**: a bot token from @BotFather and your numeric user id from @userinfobot.
 - Optionally **Discord**: a bot token (Message Content intent on) and your user id.
+- Optionally **Slack**: a Socket Mode app's bot token (`xoxb-…`) and app token (`xapp-…`), and
+  your member id (see below).
+- Optionally **Signal**: a running signal-cli daemon and the number it runs as (see below).
 - Optionally **ntfy**: a topic name nobody will guess.
 
 ## 4. Log in to the models
@@ -124,3 +127,33 @@ useful for tasks on the host. Mount project directories you want vigil to work o
 Only with a spare number. Enable it in `vigil init`, run `vigil start` once in a terminal, and scan
 the QR code with WhatsApp on that phone (Settings → Linked devices). Linking breaks if the phone is
 offline for about two weeks. Baileys is unofficial; read its README before relying on it.
+
+## Slack
+
+Create an app at <https://api.slack.com/apps> (From scratch). Turn on **Socket Mode** and generate
+an app-level token with the `connections:write` scope; that is the `xapp-…` token, and it is why no
+public URL or open port is needed. Under **OAuth & Permissions** add the bot scopes `chat:write`,
+`im:history`, `im:read`, `im:write`, `reactions:read`, `files:read` and `users:read`. Under **Event
+Subscriptions** enable events and subscribe to the bot events `message.im` and `reaction_added`.
+Turn **Interactivity & Shortcuts** on (buttons need it). Under **App Home**, tick "Allow users to
+send Slash commands and messages from the messages tab". Install the app to the workspace and copy
+the bot token (`xoxb-…`). Put both tokens in `vigil init`, or in `VIGIL_SLACK_BOT_TOKEN` and
+`VIGIL_SLACK_APP_TOKEN` in the service's environment.
+
+## Signal
+
+Install [signal-cli](https://github.com/AsamK/signal-cli) 0.13 or newer (it needs a Java runtime, or
+use the native build). It is unofficial but uses the real Signal protocol. vigil needs a Signal
+account of its own, not yours: either link signal-cli as a secondary device of a phone that holds a
+second number (`signal-cli link -n vigil` prints a `sgnl://` link; turn it into a QR code, e.g. with
+`qrencode -t ansi`, and scan it under Settings → Linked devices), or register a number directly
+(`signal-cli -a +15551234567 register`, then `verify`). Run the daemon always, next to vigil, bound
+to localhost only:
+
+```bash
+signal-cli -a +15551234567 daemon --http 127.0.0.1:8080
+```
+
+A systemd user unit like vigil's works for it too. Set `"signal": { "url": "http://127.0.0.1:8080",
+"account": "+15551234567" }` under `channels`, and your own number in `owner.identities.signal` (or
+pair with `/pair`). vigil reconnects on its own if the daemon restarts.

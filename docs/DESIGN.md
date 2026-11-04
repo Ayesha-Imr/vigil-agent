@@ -182,6 +182,8 @@ one, and idempotency keys make the repeats harmless where the outside world allo
 | --- | --- | --- |
 | Telegram | grammY, long polling | Recommended. No public URL needed; inline buttons for approvals; reactions for feedback |
 | Discord | discord.js | DMs with the owner; buttons |
+| Slack | @slack/bolt, Socket Mode | DMs with the owner; Block Kit buttons; no public URL needed |
+| Signal | signal-cli JSON-RPC daemon | Needs its own Signal account; numbered replies instead of buttons |
 | WhatsApp | Baileys (unofficial, linked device) | QR pairing; use a secondary number. Unofficial: may break or be rate-limited |
 | ntfy | HTTP | Push-only notifications to the ntfy app, for people who do not want a chat bot |
 | HTTP | built in | `POST /api/message` for iOS Shortcuts, scripts and webhooks; token auth |

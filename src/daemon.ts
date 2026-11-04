@@ -781,8 +781,10 @@ export class Daemon {
 		this.stopped = true;
 		for (const t of this.timers) clearInterval(t);
 		for (const ch of this.channels.values()) await ch.stop().catch(() => {});
-		await this.workers.stopAll();
+		// Release anything that waits (approvals, the concierge's turn) before the database closes.
+		this.s.approvals.dispose();
 		this.concierge.dispose();
+		await this.workers.stopAll();
 		this.s.db.close();
 	}
 }

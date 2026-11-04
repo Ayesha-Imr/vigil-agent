@@ -39,6 +39,21 @@ describe("createChannels", () => {
 		const on = createChannels(cfg, paths("/tmp/vigil-test-home"), { log: () => {} });
 		expect(on.get("whatsapp")?.ownerConversation()).toBe("923001234567@s.whatsapp.net");
 	});
+
+	it("creates Slack and Signal when configured and skips them with a reason otherwise", () => {
+		const cfg = config();
+		cfg.channels = { slack: { botToken: "xoxb-1" }, signal: { url: "http://127.0.0.1:8080", account: "" } };
+		const lines: string[] = [];
+		const off = createChannels(cfg, paths("/tmp/vigil-test-home"), { log: (l) => lines.push(l) });
+		expect([...off.keys()]).toEqual([]);
+		expect(lines.some((l) => l.includes("slack skipped"))).toBe(true);
+		expect(lines.some((l) => l.includes("signal skipped"))).toBe(true);
+		cfg.channels = { slack: { botToken: "xoxb-1", appToken: "xapp-1" }, signal: { url: "http://127.0.0.1:8080", account: "+15551234567" } };
+		cfg.owner.identities = { slack: ["U0OWNER"], signal: ["+923001234567"] };
+		const on = createChannels(cfg, paths("/tmp/vigil-test-home"), { log: () => {} });
+		expect(on.get("slack")?.ownerConversation()).toBe("U0OWNER");
+		expect(on.get("signal")?.ownerConversation()).toBe("+923001234567");
+	});
 });
 
 describe("ownerRoute", () => {

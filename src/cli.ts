@@ -7,11 +7,13 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { ModelRouter } from "./agent/models.ts";
 import { bwrapWorks } from "./agent/sandbox.ts";
 import { createChannels } from "./channels/index.ts";
+import { normalizeSignalId } from "./channels/signal.ts";
 import { type ChannelId, defaultConfig, loadConfig, type ModelRole, type Paths, paths, saveConfig, scrubSecretEnv, type VigilConfig } from "./config.ts";
 import { systemClock } from "./core/time.ts";
 import { Daemon } from "./daemon.ts";
@@ -68,6 +70,20 @@ async function init(p: Paths): Promise<void> {
 		cfg.channels.discord = { token: dc };
 		const id = await ask(rl, "Your Discord user id (optional; or pair later with /pair)", cfg.owner.identities.discord?.[0] ?? "");
 		if (id) cfg.owner.identities.discord = [id];
+	}
+	const slackBot = await ask(rl, "Slack bot token, xoxb-… (empty to skip; the README says how to make the app)", cfg.channels.slack?.botToken ?? "");
+	if (slackBot) {
+		const slackApp = await ask(rl, "Slack app-level token for Socket Mode, xapp-…", cfg.channels.slack?.appToken ?? "");
+		cfg.channels.slack = { botToken: slackBot, appToken: slackApp || undefined };
+		const id = await ask(rl, "Your Slack member id, U… (optional; or pair later with /pair)", cfg.owner.identities.slack?.[0] ?? "");
+		if (id) cfg.owner.identities.slack = [id];
+	}
+	const signal = await ask(rl, "Signal: the number your signal-cli daemon runs as, e.g. +15551234567 (empty to skip)", cfg.channels.signal?.account ?? "");
+	if (signal) {
+		const url = await ask(rl, "signal-cli daemon URL", cfg.channels.signal?.url ?? "http://127.0.0.1:8080");
+		cfg.channels.signal = { url, account: normalizeSignalId(signal) };
+		const own = await ask(rl, "Your own Signal number, e.g. +15557654321 (optional; or pair later with /pair)", cfg.owner.identities.signal?.[0] ?? "");
+		if (own) cfg.owner.identities.signal = [normalizeSignalId(own)];
 	}
 	const wa = (await ask(rl, "Enable WhatsApp via Baileys? Unofficial; use a spare number (y/N)", cfg.channels.whatsapp?.enabled ? "y" : "n")).toLowerCase().startsWith("y");
 	if (wa) {
@@ -138,18 +154,31 @@ function status(p: Paths): void {
 		console.log("vigil has not run yet.");
 		return;
 	}
-	const sql = (q: string) => {
-		const r = spawnSync(process.execPath, ["-e", `const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(${JSON.stringify(p.db)},{readOnly:true});console.log(JSON.stringify(d.prepare(${JSON.stringify(q)}).all()))`], { encoding: "utf8" });
-		return JSON.parse(r.stdout || "[]") as Record<string, unknown>[];
+	// Read-only, so it works while the daemon runs (SQLite WAL allows concurrent readers).
+	const db = new DatabaseSync(p.db, { readOnly: true });
+	const all = (q: string, ...a: (string | number)[]) => db.prepare(q).all(...a) as Record<string, string | number | null>[];
+	const kv = (k: string) => {
+		const r = all("SELECT value FROM kv WHERE key = ?", k)[0];
+		return r ? (JSON.parse(String(r.value)) as unknown) : undefined;
 	};
-	const open = sql("SELECT id, stage, title FROM tickets WHERE status = 'open'");
-	const approvals = sql("SELECT id, tool, reason FROM approvals WHERE status = 'pending'");
-	const events = sql("SELECT at, kind, text FROM events ORDER BY id DESC LIMIT 12");
+	const cfg = existsSync(p.config) ? loadConfig(p) : defaultConfig();
+	const gov = kv("governor") as { interrupts?: number[]; notices?: { status: string }[] } | undefined;
+	const now = Date.now();
+	const used = (gov?.interrupts ?? []).filter((t) => t > now - 86_400_000).length;
+	const waiting = (gov?.notices ?? []).filter((n) => n.status === "queued" || n.status === "held").length;
+	console.log(`mode ${cfg.proactive.mode}${kv("paused") === true ? " · PAUSED" : ""} · interrupts ${used}/${cfg.attention.maxInterruptsPerDay} today · ${waiting} waiting for the digest`);
+	const open = all("SELECT id, stage, title FROM tickets WHERE status = 'open' ORDER BY created_at");
 	console.log(`open tickets: ${open.length}`);
 	for (const t of open) console.log(`  ${t.id} [${t.stage}] ${t.title}`);
+	const approvals = all("SELECT id, tool, reason FROM approvals WHERE status = 'pending'");
 	if (approvals.length) console.log(`approvals waiting: ${approvals.map((a) => `${a.id} ${a.tool} (${a.reason})`).join(", ")}`);
+	const next = all("SELECT name, next_run_at FROM jobs WHERE enabled = 1 AND next_run_at IS NOT NULL ORDER BY next_run_at LIMIT 3");
+	if (next.length) console.log(`next: ${next.map((j) => `${j.name} ${new Date(Number(j.next_run_at)).toLocaleString("en-GB", { timeZone: cfg.owner.timezone, weekday: "short", hour: "2-digit", minute: "2-digit" })}`).join(" · ")}`);
 	console.log("recent:");
-	for (const e of events.reverse()) console.log(`  ${new Date(Number(e.at)).toLocaleTimeString()} ${e.kind}: ${e.text}`);
+	for (const e of all("SELECT at, kind, text FROM events ORDER BY id DESC LIMIT 12").reverse()) {
+		console.log(`  ${new Date(Number(e.at)).toLocaleTimeString("en-GB", { timeZone: cfg.owner.timezone })} ${e.kind}: ${e.text}`);
+	}
+	db.close();
 }
 
 async function doctor(p: Paths): Promise<void> {

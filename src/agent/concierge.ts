@@ -29,6 +29,7 @@ export class Concierge {
 	private readonly queue: ConciergeInput[] = [];
 	private current: ConciergeInput | undefined;
 	private busy = false;
+	private disposed = false;
 	private preempted: ConciergeInput | undefined;
 	private origin: Origin = { channel: "system", conversation: "" };
 
@@ -104,12 +105,15 @@ export class Concierge {
 		if (this.busy) return;
 		this.busy = true;
 		try {
-			while (this.queue.length && !this.s.paused()) {
+			while (this.queue.length && !this.disposed && !this.s.paused()) {
 				const input = this.takeBatch();
 				this.current = input;
 				await this.handle(input);
 				this.current = undefined;
 			}
+		} catch (err) {
+			// After shutdown the database is closed; anything else is logged, never left unhandled.
+			if (!this.disposed) console.error(`[vigil] concierge: ${(err as Error).stack ?? err}`);
 		} finally {
 			this.busy = false;
 			this.current = undefined;
@@ -217,6 +221,9 @@ export class Concierge {
 	}
 
 	dispose(): void {
+		this.disposed = true;
+		this.queue.length = 0;
+		void this.session?.abort().catch(() => {});
 		this.session?.dispose();
 	}
 }

@@ -42,6 +42,7 @@ export class Approvals {
 	private readonly db: Db;
 	private readonly clock: Clock;
 	private readonly waiters = new Map<string, (o: Outcome) => void>();
+	private disposed = false;
 
 	constructor(db: Db, clock: Clock) {
 		this.db = db;
@@ -87,6 +88,7 @@ export class Approvals {
 		if (!a) return Promise.resolve("expired");
 		if (a.status === "approved") return Promise.resolve("approved");
 		if (a.status !== "pending") return Promise.resolve(a.status === "denied" ? "denied" : "expired");
+		if (this.disposed) return Promise.resolve("expired");
 		return new Promise((resolve) => {
 			const done = (o: Outcome) => {
 				clearTimeout(timer);
@@ -94,6 +96,7 @@ export class Approvals {
 				resolve(o);
 			};
 			const timer = setTimeout(() => {
+				if (this.disposed) return done("expired");
 				this.expire();
 				done(this.get(id)?.status === "approved" ? "approved" : "expired");
 			}, Math.max(0, a.expires_at - this.clock.now()) + 50);
@@ -157,6 +160,13 @@ export class Approvals {
 		this.db.run("UPDATE approvals SET status = 'expired' WHERE status IN ('pending', 'approved') AND expires_at <= ?", now);
 		for (const { id } of ids) this.waiters.get(id)?.("expired");
 		return ids.length;
+	}
+
+	/** Shutdown: every waiting call is refused and no timer outlives the database. */
+	dispose(): void {
+		this.disposed = true;
+		for (const done of [...this.waiters.values()]) done("expired");
+		this.waiters.clear();
 	}
 
 	get(id: string): Approval | undefined {

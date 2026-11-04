@@ -11,12 +11,13 @@ import { join } from "node:path";
 import type { WAMessage, WAMessageContent, WASocket } from "baileys";
 import qrcode from "qrcode-terminal";
 import type { ChannelId } from "../config.ts";
-import { type Button, type Channel, type InboundMessage, type OutboundMessage, PermanentSendError, type SendResult } from "./types.ts";
-import { errorText, flattenButtons, type Log, stderrLog } from "./util.ts";
+import { type Channel, type InboundMessage, type OutboundMessage, PermanentSendError, type SendResult } from "./types.ts";
+import { ButtonMemory, errorText, flattenButtons, type Log, renderWithButtons, stderrLog } from "./util.ts";
+
+// The numbered-button helpers now live in util.ts (Signal uses them too); re-exported for callers.
+export { BUTTON_REPLY_WINDOW_MS, ButtonMemory, renderWithButtons } from "./util.ts";
 
 const ID: ChannelId = "whatsapp";
-/** How long a bare-digit reply still counts as pressing one of the last buttons sent. */
-export const BUTTON_REPLY_WINDOW_MS = 30 * 60_000;
 const RECENT_LIMIT = 500;
 const MAX_BACKOFF_MS = 60_000;
 
@@ -30,54 +31,6 @@ export interface WhatsAppOptions {
 	log?: Log;
 	/** Show a pairing QR code. Defaults to printing it on stderr. */
 	showQr?: (qr: string) => void;
-}
-
-/** The text for a message with buttons: the numbered choices appended. */
-export function renderWithButtons(text: string, buttons: Button[]): string {
-	if (buttons.length === 0) return text;
-	const choices = buttons.map((b, i) => `${i + 1} to ${b.label}`).join(", ");
-	return `${text}\n\nReply ${choices}`;
-}
-
-interface Remembered {
-	buttons: Button[];
-	at: number;
-	/** The external id of the message that carried the buttons. */
-	messageId: string;
-}
-
-/** Remembers the last buttons sent per conversation and maps a bare-digit reply to one. */
-export class ButtonMemory {
-	private readonly last = new Map<string, Remembered>();
-	private readonly windowMs: number;
-
-	constructor(windowMs = BUTTON_REPLY_WINDOW_MS) {
-		this.windowMs = windowMs;
-	}
-
-	remember(conversation: string, buttons: Button[], messageId: string, now: number): void {
-		if (buttons.length === 0) return;
-		this.last.set(conversation, { buttons, at: now, messageId });
-	}
-
-	/**
-	 * The button a reply presses, if `text` is just a number for one of the last buttons sent to
-	 * this conversation within the window. A match is used up, so a later "2" is plain text.
-	 */
-	match(conversation: string, text: string, now: number): { button: Button; messageId: string } | undefined {
-		const entry = this.last.get(conversation);
-		if (!entry) return undefined;
-		if (now - entry.at > this.windowMs) {
-			this.last.delete(conversation);
-			return undefined;
-		}
-		const m = /^\s*(\d{1,2})\s*\.?\s*$/.exec(text);
-		if (!m) return undefined;
-		const button = entry.buttons[Number(m[1]) - 1];
-		if (!button) return undefined;
-		this.last.delete(conversation);
-		return { button, messageId: entry.messageId };
-	}
 }
 
 /** The readable text of a message's content, with notes for media; undefined when there is none. */

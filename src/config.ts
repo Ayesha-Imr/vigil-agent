@@ -7,7 +7,7 @@ import { join } from "node:path";
 import type { SearchConfig } from "./agent/web.ts";
 import { DEFAULT_POLICY, type GovernorPolicy } from "./core/governor.ts";
 
-export type ChannelId = "telegram" | "discord" | "whatsapp" | "http" | "cli" | "ntfy";
+export type ChannelId = "telegram" | "discord" | "slack" | "signal" | "whatsapp" | "http" | "cli" | "ntfy";
 
 export type AcceptMode = "off" | "observe" | "auto";
 
@@ -15,7 +15,7 @@ export interface VigilConfig {
 	owner: {
 		name: string;
 		timezone: string;
-		/** Owner identities per channel: Telegram user ids, Discord user ids, WhatsApp JIDs. */
+		/** Owner identities per channel: Telegram user ids, Discord user ids, Slack user ids (U…), Signal phone numbers, WhatsApp JIDs. */
 		identities: Partial<Record<ChannelId, string[]>>;
 		/** Where proactive notifications go, in order of preference. */
 		notify: ChannelId[];
@@ -23,6 +23,10 @@ export interface VigilConfig {
 	channels: {
 		telegram?: { token?: string };
 		discord?: { token?: string };
+		/** Socket Mode: `botToken` is the xoxb- token, `appToken` the xapp- token with connections:write. */
+		slack?: { botToken?: string; appToken?: string };
+		/** A signal-cli JSON-RPC HTTP daemon (`url`, e.g. http://127.0.0.1:8080) and the number it runs as. */
+		signal?: { url: string; account: string };
 		whatsapp?: { enabled: boolean };
 		ntfy?: { server: string; topic: string; token?: string };
 		/** `publicUrl` is where the phone can reach this server (for ntfy action buttons), if anywhere. */
@@ -85,7 +89,7 @@ export function defaultConfig(): VigilConfig {
 			name: "owner",
 			timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
 			identities: {},
-			notify: ["telegram", "discord", "whatsapp", "ntfy"],
+			notify: ["telegram", "discord", "slack", "signal", "whatsapp", "ntfy"],
 		},
 		channels: { http: { port: 7777 } },
 		models: structuredClone(DEFAULT_MODELS),
@@ -155,6 +159,8 @@ export function loadConfig(p: Paths = paths()): VigilConfig {
 	const env = process.env;
 	if (env.VIGIL_TELEGRAM_TOKEN) cfg.channels.telegram = { ...cfg.channels.telegram, token: env.VIGIL_TELEGRAM_TOKEN };
 	if (env.VIGIL_DISCORD_TOKEN) cfg.channels.discord = { ...cfg.channels.discord, token: env.VIGIL_DISCORD_TOKEN };
+	if (env.VIGIL_SLACK_BOT_TOKEN) cfg.channels.slack = { ...cfg.channels.slack, botToken: env.VIGIL_SLACK_BOT_TOKEN };
+	if (env.VIGIL_SLACK_APP_TOKEN) cfg.channels.slack = { ...cfg.channels.slack, appToken: env.VIGIL_SLACK_APP_TOKEN };
 	if (env.VIGIL_HTTP_TOKEN && cfg.channels.http) cfg.channels.http.token = env.VIGIL_HTTP_TOKEN;
 	if (env.VIGIL_NTFY_TOKEN && cfg.channels.ntfy) cfg.channels.ntfy.token = env.VIGIL_NTFY_TOKEN;
 	if (env.BRAVE_API_KEY) cfg.search = { ...cfg.search, apiKey: env.BRAVE_API_KEY };
@@ -181,7 +187,16 @@ export function saveConfig(cfg: VigilConfig, p: Paths = paths()): void {
 
 /** Environment variables that hold secrets: read once at startup, then removed from the process,
  * so the shells the agent's tools start do not inherit them. */
-export const SECRET_ENV = ["VIGIL_TELEGRAM_TOKEN", "VIGIL_DISCORD_TOKEN", "VIGIL_HTTP_TOKEN", "VIGIL_NTFY_TOKEN", "BRAVE_API_KEY", "OPENCODE_API_KEY"];
+export const SECRET_ENV = [
+	"VIGIL_TELEGRAM_TOKEN",
+	"VIGIL_DISCORD_TOKEN",
+	"VIGIL_SLACK_BOT_TOKEN",
+	"VIGIL_SLACK_APP_TOKEN",
+	"VIGIL_HTTP_TOKEN",
+	"VIGIL_NTFY_TOKEN",
+	"BRAVE_API_KEY",
+	"OPENCODE_API_KEY",
+];
 
 export function scrubSecretEnv(): Record<string, string> {
 	const taken: Record<string, string> = {};
