@@ -261,7 +261,8 @@ flowchart LR
 - **Triage** of watcher events runs on the cheap model with no tools at all: untrusted input,
   no private data, no side effects (Meta's "rule of two").
 
-[docs/DESIGN.md](docs/DESIGN.md) has the full model. [docs/research/](docs/research/) holds the
+[docs/DESIGN.md](docs/DESIGN.md) has the full model, [docs/FAQ.md](docs/FAQ.md) the common
+questions, and [docs/DEPLOY.md](docs/DEPLOY.md) the server setup. [docs/research/](docs/research/) holds the
 research this was built from: the pi harness internals, and the 2026 landscape of always-on agents
 (DSH, OpenClaw, Hermes, Grok, ChatGPT Pulse) with best practices for proactive notifications.
 
