@@ -94,6 +94,9 @@ export class Outbox {
 				this.clock.now(),
 			);
 			for (const row of due) {
+				// The lock can be lost during a pass (a send in flight across a suspend): stop at once
+				// instead of sending the rest of the snapshot (outbox finding F2d).
+				if (!this.mayDeliver()) break;
 				if (this.heldBack(row)) continue;
 				if (await this.sendOne(row)) sent++;
 			}

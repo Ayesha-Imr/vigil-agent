@@ -333,3 +333,20 @@ describe("message refs", () => {
 		expect(db.get<{ n: number }>("SELECT COUNT(*) AS n FROM message_refs")!.n).toBe(0);
 	});
 });
+
+describe("the daemon lock during a pass", () => {
+	it("F2d: losing the lock mid-pass stops the rest of the snapshot", async () => {
+		let holds = true;
+		outbox.mayDeliver = () => holds;
+		const orig = tg.send.bind(tg);
+		tg.send = async (m) => {
+			const r = await orig(m);
+			holds = false; // another daemon took the lock while this send was in flight
+			return r;
+		};
+		outbox.enqueue({ channel: "telegram", conversation: "42", text: "one" });
+		outbox.enqueue({ channel: "telegram", conversation: "43", text: "two" });
+		await outbox.deliverDue();
+		expect(tg.sent.map((m) => m.text)).toEqual(["one"]);
+	});
+});

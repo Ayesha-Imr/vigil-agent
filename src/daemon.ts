@@ -1,7 +1,7 @@
 // The daemon: builds the services, starts the channels, routes every inbound message through the
 // gate, and runs the loops (outbox, governor, scheduler, watchers, workers).
 
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { randomInt } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -70,8 +70,14 @@ export function lockHolderAlive(lock: { pid: number; at: number }): boolean {
 		const cmd = readFileSync(`/proc/${lock.pid}/cmdline`, "utf8");
 		return /node|vigil|bun/.test(cmd);
 	} catch {
-		// No /proc (macOS): trust a fresh heartbeat only.
-		return Date.now() - lock.at < 2 * 60_000;
+		// No /proc (macOS): ask ps what the pid runs. A suspended machine leaves the heartbeat old
+		// while the holder is alive, so the heartbeat alone is not evidence (outbox finding F2d).
+		try {
+			const comm = execFileSync("ps", ["-p", String(lock.pid), "-o", "comm="], { encoding: "utf8", timeout: 5_000 });
+			return /node|vigil|bun/.test(comm);
+		} catch {
+			return Date.now() - lock.at < 2 * 60_000;
+		}
 	}
 }
 
