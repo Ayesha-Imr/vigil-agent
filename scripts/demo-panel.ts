@@ -6,7 +6,7 @@ import { defaultConfig, paths } from "../src/config.ts";
 import { Daemon } from "../src/daemon.ts";
 import { panelRoutes } from "../src/panel/panel.ts";
 const home = process.env.VIGIL_HOME ?? "/tmp/vigil-panel-demo"; const p = paths(home);
-const cfg = defaultConfig(); cfg.owner.name = "Ayesha"; cfg.owner.timezone = "Asia/Karachi"; cfg.channels.http = { port: 17878, token: "t" };
+const cfg = defaultConfig(); cfg.owner.name = "Ayesha"; cfg.owner.timezone = "Asia/Karachi"; cfg.channels.http = { port: 17878, token: "t", allowApprovals: true };
 let d: Daemon | undefined;
 const http = new HttpChannel({ port: 17878, token: "t", handlers: panelRoutes(() => d) });
 const rt = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null, allowModelNetwork: false });

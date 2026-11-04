@@ -190,7 +190,9 @@ button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 let TOKEN = new URLSearchParams(location.search).get("token") || (()=>{try{return localStorage.getItem("vigil.token")}catch{return null}})();
 if (new URLSearchParams(location.search).get("token")) { try{localStorage.setItem("vigil.token", TOKEN)}catch{} history.replaceState(null,"","/panel"); }
 function saveTok(){TOKEN=document.getElementById("tok").value.trim();try{localStorage.setItem("vigil.token",TOKEN)}catch{};load()}
-const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+// Buttons carry their action in data-act and one listener reads it: no values inside inline JS.
+document.addEventListener("click", e => { const b = e.target.closest("button[data-act]"); if (b) act(b.dataset.act); });
 const ago = t => { const m = Math.round((Date.now()-t)/60000); return m < 1 ? "now" : m < 60 ? m+" min ago" : m < 1440 ? Math.round(m/60)+" h ago" : Math.round(m/1440)+" d ago"; };
 const when = t => t ? new Date(t).toLocaleString([], {weekday:"short", hour:"2-digit", minute:"2-digit"}) : "—";
 async function act(data){ await fetch("/api/action",{method:"POST",headers:{"content-type":"application/json",authorization:"Bearer "+TOKEN},body:JSON.stringify({data})}); load(); }
@@ -198,15 +200,15 @@ function render(s){
   const b = s.budget, pct = b.interruptsMax ? Math.min(100, 100*b.interruptsUsed/b.interruptsMax) : 100;
   let h = '<header><h1>vigil</h1><span class="chip">'+(s.paused?"paused":"running")+'</span><span class="chip">mode '+esc(s.mode)+'</span><span class="chip">'+(b.quietNow?"quiet hours":"awake")+'</span>'
     + '<span class="meta">'+esc(s.model || "no model — log in")+'</span>'
-    + '<button onclick="act(\\''+(s.paused?"resume":"pause")+'\\')">'+(s.paused?"Resume":"Pause")+'</button></header>';
+    + '<button data-act="'+(s.paused?"resume":"pause")+'">'+(s.paused?"Resume":"Pause")+'</button></header>';
   h += '<h2>Needs you</h2>';
   h += s.needsYou.length ? s.needsYou.map(n => '<div class="card need"><div class="title">'+esc(n.title)+' <span class="chip">'+esc(n.kind)+'</span></div><div class="detail">'+esc(n.detail)+'</div>'
-      + (n.actions||[]).map((a,i) => '<button class="'+(i===0?"primary":"")+'" onclick="act(\\''+esc(a.data)+'\\')">'+esc(a.label)+'</button>').join("") + '</div>').join("")
+      + (n.actions||[]).map((a,i) => '<button class="'+(i===0?"primary":"")+'" data-act="'+esc(a.data)+'">'+esc(a.label)+'</button>').join("") + '</div>').join("")
     : '<div class="empty ok">Nothing. </div>';
   h += '<h2>Attention budget</h2><div class="card"><div class="row"><span>Interrupts today</span><span class="r">'+b.interruptsUsed+' / '+b.interruptsMax+'</span></div><div class="meter"><i style="width:'+pct+'%"></i></div>'
     + '<div class="row"><span>Critical today</span><span class="r">'+b.criticalsUsed+' / '+b.criticalsMax+'</span></div><div class="row"><span>Waiting for the digest</span><span class="r">'+b.waiting+'</span></div></div>';
   if (s.waiting.length) h += '<div class="card">'+s.waiting.map(n => '<div class="row"><span>'+esc(n.text)+'</span><span class="r">'+esc(n.urgency)+' · '+esc(n.topic)+'</span></div>').join("")+'</div>';
-  if (s.mode === "observe" && s.observed.length) h += '<h2>Would have done (observe mode)</h2><div class="card">'+s.observed.map(o => '<div class="row"><span>'+esc(o.text.replace(/^would /,""))+'</span><span class="r">'+ago(o.at)+'</span></div>').join("")+(s.httpApprovals ? '<button class="primary" onclick="act(\\'mode:auto\\')">Looks right: switch to auto</button>' : '<div class="detail">Looks right? Send /mode auto in your chat app.</div>')+'</div>';
+  if (s.mode === "observe" && s.observed.length) h += '<h2>Would have done (observe mode)</h2><div class="card">'+s.observed.map(o => '<div class="row"><span>'+esc(o.text.replace(/^would /,""))+'</span><span class="r">'+ago(o.at)+'</span></div>').join("")+(s.httpApprovals ? '<button class="primary" data-act="mode:auto">Looks right: switch to auto</button>' : '<div class="detail">Looks right? Send /mode auto in your chat app.</div>')+'</div>';
   if (s.working.length) h += '<h2>Working</h2><div class="card">'+s.working.map(t => '<div class="row"><span>'+esc(t.title)+'</span><span class="r">'+esc(t.stage)+' · '+ago(t.updated)+'</span></div>').join("")+'</div>';
   if (s.jobs.length) h += '<h2>Schedule</h2><div class="card">'+s.jobs.map(j => '<div class="row"><span>'+esc(j.name)+(j.system?' <span class="chip">built in</span>':'')+'<div class="detail">'+esc(j.when)+' → '+esc(j.action)+(j.last?' · last: '+esc(j.last):'')+'</div></span><span class="r">'+when(j.next)+'</span></div>').join("")+'</div>';
   if (s.watchers.length) h += '<h2>Watching</h2><div class="card">'+s.watchers.map(w => '<div class="row"><span>'+esc(w.name)+'<div class="detail">'+esc(w.target)+(w.error?' · error: '+esc(w.error):'')+'</div></span><span class="r">every '+w.every+' min</span></div>').join("")+'</div>';
