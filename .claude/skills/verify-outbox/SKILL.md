@@ -39,7 +39,7 @@ jar sha256 `e20447644bfabd29d6bd0fc2c0eb1473fb301c1a0e4dfe1961938ce5a191edbf`, O
 Every line is `PASS` or `FAIL`, and the script exits 1 on any `FAIL`. Each TLC run is cut off after
 `OUTBOX_TLC_TIMEOUT` seconds (default 300) and then counts as `FAIL`: a change that makes the
 state space explode shows up instead of hanging. Without a guard on `deliverDue`, for example,
-safety fails at once and the liveness run takes minutes. Expected today, all `PASS`:
+safety fails at once and the liveness run hits the limit. Expected today, all `PASS`:
 
 - current code: `Outbox.cfg` (safety, 596,203 distinct states) and `OutboxLive.cfg` (liveness,
   24,695 states) find no error. `--deep`: `OutboxDeep.cfg` 4,015,453 states, `OutboxLiveDeep.cfg`
@@ -50,9 +50,9 @@ safety fails at once and the liveness run takes minutes. Expected today, all `PA
 
 ## Does my change touch this?
 
-Coverage record. Sync commit: `d541891fbaa4a82f752be978a77156ae890d70b8` (the code commit at
-which this model was last confirmed to describe the code below; the verification files were
-written on top of it).
+Coverage record. Sync commit: `6ac9124751ef146bc29e56b07dc6c836a57a3e81` (the commit at
+which the model was last confirmed to describe the code below; every channel, including
+Slack and Signal, is the same abstract `Channel.send` to the model).
 
 | File | What the model takes from it | Lines at sync commit |
 | --- | --- | --- |
@@ -64,15 +64,15 @@ written on top of it).
 | `src/channels/types.ts` | `PermanentSendError`; `Channel.send` | 54, 60 |
 | `src/agent/services.ts` | `sendSolicited`: orderKey only for `ref.kind === "ticket"` | 69-98 (key: 96) |
 | `src/agent/tools.ts` | `report` (ref ticket) and `ask_owner` (ref attention) enqueue through `sendSolicited` | 300, 332 |
-| `src/core/notifier.ts` | `send`: enqueue with no orderKey | 154-161 |
-| `src/agent/sessions.ts` | approval `ask`: enqueue with no orderKey | 89-99 |
-| `src/daemon.ts` | `start`: failed channels deleted from the map the Outbox reads, `every(3_000, deliverDue)` | 162-204 (172-175, 189) |
-| | ad hoc `deliverDue`: `say`, `tryPair`; enqueue in `runJob` remind | 404-408, 505-506, 269 |
-| `src/agent/concierge.ts`, `src/panel/panel.ts` | ad hoc `deliverDue` | 200, 117 |
+| `src/core/notifier.ts` | `send`: enqueue with no orderKey (notices now carry buttons) | 160-172 |
+| `src/agent/sessions.ts` | approval `ask`: enqueue with no orderKey | 92-104 |
+| `src/daemon.ts` | `start`: failed channels deleted from the map the Outbox reads, `every(3_000, deliverDue)` | 162-207 (173-178, 192) |
+| | ad hoc `deliverDue`: `say`, `tryPair`; enqueue in `runJob` remind | 420-424, 521-522, 279 |
+| `src/agent/concierge.ts`, `src/panel/panel.ts` | ad hoc `deliverDue` | 223, 118 |
 | `src/store/db.ts` | `Db.tx` (nested joins outer), `outbox` and `message_refs` tables | 208-229, 80-97 (+ migration 162), 145-152 |
-| `src/cli.ts` | `vigil chat` starts a second, embedded daemon on the same database | 296-298 |
+| `src/cli.ts` | `vigil chat` starts a second, embedded daemon on the same database | 346-348 |
 
-Run `git diff d541891fbaa4a82f752be978a77156ae890d70b8 -- <files above>`. If the diff touches any
+Run `git diff 6ac9124751ef146bc29e56b07dc6c836a57a3e81 -- <files above>`. If the diff touches any
 of those functions, or adds a new `outbox.enqueue` caller with an `orderKey`, or a new `await`
 inside `deliverDue`/`sendOne`, re-read the matching part of `verification/outbox/Outbox.tla`
 before trusting a `PASS`. Not covered at all: `split()`'s cutting (183-197; the model only uses
@@ -159,7 +159,7 @@ Each file in `verification/outbox/mutants/` names the code change in its header.
   `ref.kind "attention"`, and `sendSolicited` gives an orderKey only to `ref.kind "ticket"`
   (services.ts:96), so the ticket's next report overtakes a question whose send failed once.
 - `findings/TwoDaemonsDoubleSend.cfg`, rule `AtMostOnceWithoutCrash`: `running` lives in one
-  `Outbox` object, so `vigil chat` (an embedded daemon, cli.ts:296) on the same database as the
+  `Outbox` object, so `vigil chat` (an embedded daemon, cli.ts:346) on the same database as the
   running service sends each due row twice.
 
 When a fix lands: confirm the finding's cfg now passes (it will show `FAIL` in check.sh, which is

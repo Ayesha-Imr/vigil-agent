@@ -159,8 +159,31 @@ export class Daemon {
 
 	reloadPolicy: () => void = () => {};
 
+	/**
+	 * One daemon per database: two would each think they own the outbox and the running jobs, and send
+	 * twice (verification/outbox, finding TwoDaemonsDoubleSend). A lock row with the owner's pid and
+	 * a heartbeat; a lock whose process is gone, or whose heartbeat is stale, is taken over.
+	 */
+	private takeLock(): void {
+		const s = this.s;
+		const lock = s.db.getKv<{ pid: number; at: number }>("daemon.lock");
+		const alive = (pid: number) => {
+			try {
+				process.kill(pid, 0);
+				return true;
+			} catch {
+				return false;
+			}
+		};
+		if (lock && lock.pid !== process.pid && alive(lock.pid) && Date.now() - lock.at < 2 * 60_000) {
+			throw new Error(`vigil is already running on this home (pid ${lock.pid}). Stop it first, or talk to it through the HTTP API.`);
+		}
+		s.db.setKv("daemon.lock", { pid: process.pid, at: Date.now() });
+	}
+
 	async start(): Promise<void> {
 		const s = this.s;
+		this.takeLock();
 		s.scheduler.recover();
 		// Runs claimed before a crash but never done run now (verification/scheduler, finding S3).
 		const unfinished = s.scheduler.unfinishedRuns(DAY);
@@ -190,6 +213,7 @@ export class Daemon {
 				this.timers.push(t);
 			};
 			every(3_000, () => s.outbox.deliverDue());
+			every(30_000, () => s.db.setKv("daemon.lock", { pid: process.pid, at: Date.now() }));
 			every(30_000, () => this.tickGovernorAndClock());
 			every(60_000, () => this.checkWatchers());
 			every(15_000, () => this.workers.pump());
@@ -794,6 +818,7 @@ export class Daemon {
 		this.s.approvals.dispose();
 		this.concierge.dispose();
 		await this.workers.stopAll();
+		if (this.s.db.getKv<{ pid: number }>("daemon.lock")?.pid === process.pid) this.s.db.setKv("daemon.lock", null);
 		this.s.db.close();
 	}
 }

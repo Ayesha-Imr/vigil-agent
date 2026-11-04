@@ -329,7 +329,7 @@ export function workerTools(s: Services, ticketId: string): ToolDefinition[] {
 				s.tickets.setStage(ticketId, "answer");
 				noteToConcierge(s, `ticket ${ticketId} "${ticket().title}" asked the owner: ${p.question}${choices.length ? ` (choices: ${choices.join(" / ")})` : ""}`);
 				const buttons = choices.length ? [choices.map((c, i) => ({ data: `answer:${id}:${i}`, label: c.slice(0, 40) }))] : undefined;
-				sendSolicited(s, originRoute(), `❓ ${ticket().title}\n${clip(p.question, 800)}${choices.length ? "" : "\n(Reply to this message to answer.)"}`, { kind: "attention", id }, { buttons, replyTo: ticket().origin.externalId });
+				sendSolicited(s, originRoute(), `❓ ${ticket().title}\n${clip(p.question, 800)}${choices.length ? "" : "\n(Reply to this message to answer.)"}`, { kind: "attention", id }, { buttons, replyTo: ticket().origin.externalId, ticketId });
 				return text("Asked. End your turn now; the answer will arrive as a message.");
 			},
 		}),

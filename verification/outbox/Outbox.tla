@@ -10,11 +10,11 @@
 (*   src/agent/services.ts sendSolicited (69-98): the only caller that     *)
 (*                        passes an orderKey, and only for ref.kind        *)
 (*                        "ticket" (line 96)                               *)
-(*   src/daemon.ts        start (162-204): deliverDue every 3 s (189),     *)
+(*   src/daemon.ts        start (162-207): deliverDue every 3 s (192),     *)
 (*                        a channel that fails to start is deleted from    *)
-(*                        the map the Outbox reads (172-175); say (404-    *)
-(*                        408) and tryPair (505-506) call deliverDue ad    *)
-(*                        hoc; so do concierge.ts:200 and panel.ts:117.    *)
+(*                        the map the Outbox reads (173-178); say (420-    *)
+(*                        424) and tryPair (521-522) call deliverDue ad    *)
+(*                        hoc; so do concierge.ts:223 and panel.ts:118.    *)
 (*                                                                         *)
 (* Atomicity, as in the code:                                              *)
 (*  - Node runs one piece of JavaScript at a time; code between two        *)
@@ -45,7 +45,7 @@
 (*    rows.                                                                *)
 (*  - The channel's answer per attempt is chosen freely: success,          *)
 (*    transient error, PermanentSendError; a missing channel is decided    *)
-(*    per process lifetime (chanUp), as daemon.ts:174 does.  Bounds on     *)
+(*    per process lifetime (chanUp), as daemon.ts:176 does.  Bounds on     *)
 (*    transient errors, drops and crashes are global, not per row.         *)
 (*  - external_id is the delivery's number in `log`.                       *)
 (*  - One channel and one conversation (the order keys of the code include *)
@@ -61,7 +61,7 @@ CONSTANTS
     MaxCrashes,          \* bound: process deaths
     MaxPasses,           \* deliverDue calls that could be inside the loop at once
     Daemons,             \* 1; or 2 = two vigil processes on one database
-    ChannelMayBeMissing, \* a channel can fail to start (daemon.ts:172-175)
+    ChannelMayBeMissing, \* a channel can fail to start (daemon.ts:173-178)
     AmbiguousFailures    \* channel.send can throw after the message went out
 
 ASSUME BLOCKING_ATTEMPTS \in Nat \ {0} /\ Daemons \in {1, 2}
@@ -79,8 +79,8 @@ Slots == 1..MaxPasses
 DaemonOf(p) == IF Daemons = 1 THEN 1 ELSE p
 ChanStates == IF ChannelMayBeMissing THEN BOOLEAN ELSE {TRUE}
 
-\* services.ts:96: orderKey only for ref.kind "ticket"; notifier.ts:160, sessions.ts:92-98,
-\* daemon.ts:269/406/505 pass none.
+\* services.ts:96: orderKey only for ref.kind "ticket"; notifier.ts:171, sessions.ts:97-103,
+\* daemon.ts:279/422/521 pass none.
 CallerKey(g) == IF Items[g].kind = "ticket" THEN Items[g].ticket ELSE NoKey
 \* outbox.ts:60: item.orderKey, else `split:${now}:${Math.random()}` when split() made several parts, else null
 OutboxKey(g) == IF CallerKey(g) # NoKey THEN CallerKey(g)
@@ -293,7 +293,7 @@ Crash ==
     /\ pass' = [p \in Slots |-> IdlePass]
     /\ UNCHANGED <<enq, status, attempts, due, okey, ext, refs, chanUp, fails, drops>>
 
-\* systemd Restart=always; Daemon.start (daemon.ts:162-204) re-creates the Outbox with
+\* systemd Restart=always; Daemon.start (daemon.ts:162-207) re-creates the Outbox with
 \* running = false and drops channels that fail to start.  The outbox table is untouched.
 Restart ==
     /\ ~up

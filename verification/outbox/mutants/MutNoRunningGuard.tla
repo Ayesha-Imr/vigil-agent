@@ -3,8 +3,8 @@
 (* AtMostOnceWithoutCrash is violated).                                     *)
 (* Code change, src/core/outbox.ts deliverDue (line 86): delete             *)
 (*   if (this.running) return 0;                                            *)
-(* The 3 s timer (daemon.ts:189) and say()'s `void deliverDue()`            *)
-(* (daemon.ts:407) can then both be inside the loop with the same row.      *)
+(* The 3 s timer (daemon.ts:192) and say()'s `void deliverDue()`            *)
+(* (daemon.ts:423) can then both be inside the loop with the same row.      *)
 EXTENDS Outbox
 
 NextM ==

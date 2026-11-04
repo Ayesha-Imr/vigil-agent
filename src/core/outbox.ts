@@ -121,13 +121,15 @@ export class Outbox {
 			return false;
 		}
 		try {
-			const res = await channel.send({
+			// A send that never settles would hold the outbox for every channel: bound it. A timeout
+			// can mean the message went out anyway, so this trades a rare duplicate for liveness.
+			const res = await withTimeout(SEND_TIMEOUT_MS, channel.send({
 				conversation: row.conversation,
 				text: row.text,
 				buttons: row.buttons ? (JSON.parse(row.buttons) as Button[][]) : undefined,
 				replyTo: row.reply_to ?? undefined,
 				silent: row.silent === 1,
-			});
+			}));
 			const at = this.clock.now();
 			this.db.tx(() => {
 				this.db.run("UPDATE outbox SET status = 'sent', sent_at = ?, external_id = ?, attempts = attempts + 1 WHERE id = ?", at, res.externalId, row.id);
@@ -177,6 +179,25 @@ export class Outbox {
 	problems(): { id: number; channel: string; attempts: number; last_error: string | null; text: string }[] {
 		return this.db.all("SELECT id, channel, attempts, last_error, text FROM outbox WHERE status = 'failing' ORDER BY id");
 	}
+}
+
+const SEND_TIMEOUT_MS = 90_000;
+
+function withTimeout<T>(ms: number, p: Promise<T>): Promise<T> {
+	return new Promise<T>((resolve, reject) => {
+		const t = setTimeout(() => reject(new Error(`send timed out after ${ms / 1000} s`)), ms);
+		t.unref?.();
+		p.then(
+			(v) => {
+				clearTimeout(t);
+				resolve(v);
+			},
+			(e: unknown) => {
+				clearTimeout(t);
+				reject(e);
+			},
+		);
+	});
 }
 
 /** Split text into parts of at most `max` chars, preferring paragraph and line breaks. */

@@ -75,3 +75,32 @@ describe("worker pool findings", () => {
 		expect(starts).toBeLessThan(5);
 	});
 });
+
+describe("outbox findings", () => {
+	it("F2: a second daemon on the same home refuses to start", async () => {
+		h = await harness(() => fauxAssistantMessage("x"));
+		// Another live process holds the lock (the parent of this test process stands in for it).
+		h.daemon.s.db.setKv("daemon.lock", { pid: process.ppid, at: Date.now() });
+		await expect(h.restart()).rejects.toThrow(/already running/);
+		// A stale lock (no heartbeat for minutes) is taken over.
+		h.daemon.s.db.setKv("daemon.lock", { pid: process.ppid, at: Date.now() - 10 * 60_000 });
+		const d2 = await h.restart();
+		await d2.stop();
+	});
+	it("F1: a ticket's question and its later report share an order key", async () => {
+		h = await harness((ctx) => {
+			if (!isWorker(ctx)) return fauxAssistantMessage("x");
+			if (!ctx.lastToolResult) return fauxAssistantMessage([fauxToolCall("ask_owner", { question: "Which one?" })], { stopReason: "toolUse" });
+			if (ctx.lastToolResult.startsWith("Asked")) return fauxAssistantMessage([fauxToolCall("report", { kind: "blocked", summary: "Waiting on you." })], { stopReason: "toolUse" });
+			return fauxAssistantMessage("x");
+		});
+		const t = h.daemon.s.tickets.create({ title: "T", mandate: { request: "r", scope: "s", strength: "explicit" }, origin: { channel: "telegram", conversation: "42" } });
+		h.daemon.workers.pump();
+		await h.settle();
+		const keys = h.daemon.s.db.all<{ order_key: string | null; ref_kind: string }>("SELECT order_key, ref_kind FROM outbox ORDER BY id");
+		const q = keys.find((k) => k.ref_kind === "attention");
+		const r = keys.find((k) => k.ref_kind === "ticket");
+		expect(q?.order_key).toBe(`${t.id}:telegram:42`);
+		expect(r?.order_key).toBe(q?.order_key);
+	});
+});

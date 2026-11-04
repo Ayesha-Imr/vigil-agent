@@ -71,7 +71,7 @@ export function sendSolicited(
 	to: OwnerRoute | undefined,
 	text: string,
 	ref: { kind: "ticket" | "reply" | "attention" | "approval"; id: string },
-	opts: { replyTo?: string; buttons?: { data: string; label: string }[][]; urgent?: boolean; topic?: string } = {},
+	opts: { replyTo?: string; buttons?: { data: string; label: string }[][]; urgent?: boolean; topic?: string; ticketId?: string } = {},
 ): void {
 	const route = to ?? s.ownerRoute();
 	if (!route) {
@@ -93,6 +93,11 @@ export function sendSolicited(
 		// A question or result that has to go out during quiet hours arrives without a buzz.
 		silent: quiet && !opts.urgent,
 		ref,
-		orderKey: ref.kind === "ticket" ? `${ref.id}:${route.channel}:${route.conversation}` : undefined,
+		// Every message of one ticket to one conversation keeps its order: results and questions alike
+		// (verification/outbox, finding F1: a question could be overtaken by the next report).
+		orderKey: (() => {
+			const tk = ref.kind === "ticket" ? ref.id : opts.ticketId;
+			return tk ? `${tk}:${route.channel}:${route.conversation}` : undefined;
+		})(),
 	});
 }
