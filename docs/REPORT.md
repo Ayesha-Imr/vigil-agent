@@ -134,8 +134,36 @@ Defects found by the tests, the model checker and a code audit, and fixed:
 | HTTP API | Concurrent requests could receive each other's replies | audit |
 | ntfy | Signed action URLs on a public topic let anyone approve | audit |
 | Models | A request ID containing `401` cooled a whole provider down for 30 minutes | unit tests |
+| Gate | `git -C repo push` (any git global option) skipped every git rule | writing `vigil demo` |
+| Gate | Relative paths and symlinks (`read ../../config.json`) walked around protected-file rules | second audit |
+| Pairing | A 6-digit code with no expiry or rate limit could be brute-forced | second audit |
+| SSRF | IPv4-mapped IPv6 literals (`[::ffff:a9fe:a9fe]`) passed the internal-address check | second audit |
+| Inferred work | Tickets started from untrusted pages could read and write memory | second audit |
 
-<!-- MODEL-CHECKING FINDINGS: filled when the runs complete -->
+Defects found by model checking (each replayed on the real code before it was fixed, and each fix
+checked by the model):
+
+| Spec | Defect | Harm |
+| --- | --- | --- |
+| Governor | A notice shown to a reply being written could also go out in the end-of-quiet digest during the turn | The owner was told twice |
+| Governor | A reply with an error but some text did not mark its notices told | Repeated in a digest |
+| Governor | A mute during a turn dropped a notice the reply had already told; after an unmute it came back | A duplicate |
+| Governor | `/digest` did not expire notices first; gap and dedup windows longer than the history were accepted | A stale notice shown; a rule silently weaker than configured |
+| Scheduler | A run that outlived its lease could free the job a newer run held | Overlap no longer bounded by the lease |
+| Scheduler | A run claimed just before a crash never ran | A lost reminder or job |
+| Scheduler | A slot due exactly at the claim instant was neither run nor counted | Missed runs under-reported |
+| Workers | `/stop` while a worker session was starting did not stop it | Withdrawn work done anyway |
+| Workers | An owner message pending when a ticket reported ready was never delivered | A lost message |
+| Workers | Inputs of a first turn cut by a timeout were lost | "Reply to continue" that went nowhere |
+| Workers | No worker model plus a pending input re-ran the ticket on promise callbacks | The daemon froze at 100% CPU |
+| Outbox | A ticket's question (and its approval ask) could be overtaken by the ticket's next report | Messages out of order |
+| Outbox | Two daemons on one database each sent every message; the first lock was not atomic and could be taken from a suspended, live holder | Every message twice |
+
+The mutation discipline mattered: several first drafts of the models passed trivially, and only
+showed their weakness when a mutant that removes a real check was *not* caught. Writing the
+property-based tests and the model of the same rule separately also paid off. The tests caught gate
+and watcher bugs the models do not cover, and the models caught ordering bugs the tests never
+reached.
 
 ## 5. Limitations
 
