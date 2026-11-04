@@ -57,7 +57,7 @@ export class Notifier {
 		this.route = opts.route;
 		this.state = this.db.getKv<GovernorState>(STATE_KEY) ?? initialState(this.clock.now());
 		// A claim cannot outlive the process that made it: after a restart, claimed notices wait again.
-		this.state = release(this.state);
+		this.state = release(this.state, undefined, this.clock.now());
 	}
 
 	/** Offer a notification to the governor; it is sent now, later, or never. */
@@ -123,7 +123,7 @@ export class Notifier {
 
 	/** The reply was not stored: the claimed notices wait again. */
 	releaseClaim(ids: readonly string[]): void {
-		if (ids.length) this.commit(release(this.state, ids));
+		if (ids.length) this.commit(release(this.state, ids, this.clock.now()));
 	}
 
 	/** Confirm that a stored reply told the owner about these waiting notices. */

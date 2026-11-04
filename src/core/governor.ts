@@ -258,7 +258,8 @@ export function tick(state: GovernorState, now: number, policy: GovernorPolicy):
 		digest = out.flushed;
 	}
 
-	notices = notices.filter((n) => isWaiting(n) || n.createdAt > now - HISTORY_MS);
+	// Waiting and claimed notices are never pruned: a claim must end in told or released.
+	notices = notices.filter((n) => isWaiting(n) || n.status === "claimed" || n.createdAt > now - HISTORY_MS);
 	const interrupts = state.interrupts.filter((t) => t > now - DAY);
 	const criticals = state.criticals.filter((t) => t > now - DAY);
 	const mutes = Object.fromEntries(Object.entries(state.mutes).filter(([, until]) => until > now));
@@ -322,14 +323,21 @@ export function markDelivered(state: GovernorState, ids: readonly string[], now:
 	return { state: { ...state, notices }, notices: done };
 }
 
-/** No reply was stored: claimed notices wait again, as they were. */
-export function release(state: GovernorState, ids?: readonly string[]): GovernorState {
+/**
+ * No reply was stored: claimed notices wait again, as they were, unless their topic was muted
+ * meanwhile, in which case they are dropped as the mute would have dropped them.
+ */
+export function release(state: GovernorState, ids?: readonly string[], now = Date.now()): GovernorState {
 	const want = ids ? new Set(ids) : undefined;
 	return {
 		...state,
-		notices: state.notices.map((n) =>
-			n.status === "claimed" && (!want || want.has(n.id)) ? { ...n, status: n.claimedFrom ?? "queued", claimedFrom: undefined } : n,
-		),
+		notices: state.notices.map((n) => {
+			if (n.status !== "claimed" || (want && !want.has(n.id))) return n;
+			const muted = (state.mutes[n.topic] ?? 0) > now;
+			return muted
+				? { ...n, status: "dropped", decision: "drop:muted", resolvedAt: now, claimedFrom: undefined }
+				: { ...n, status: n.claimedFrom ?? "queued", claimedFrom: undefined };
+		}),
 	};
 }
 
