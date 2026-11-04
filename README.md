@@ -182,6 +182,7 @@ useful phrasings:
 | `/status` | what's going on, budget, model |
 | `/tickets`, `/stop <id>` | background work |
 | `/digest` | what's waiting for the digest, now |
+| `/jobs`, `/memory` | what's scheduled; what vigil remembers about you |
 | `/mute <topic> [hours]`, `/unmute <topic>` | silence a topic |
 | `/mode off\|observe\|auto` | proactive work from watchers |
 | `/pause`, `/resume` | kill switch: keep listening, start and send nothing new |
