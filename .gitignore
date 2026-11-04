@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.vigil/
+*.log
+verification/**/states/
+verification/**/*_TTrace_*
+.env
