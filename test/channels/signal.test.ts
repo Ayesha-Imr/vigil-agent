@@ -106,8 +106,8 @@ describe("fromSignalEnvelope", () => {
 
 describe("numbered buttons", () => {
 	const buttons = [
-		{ label: "Approve", data: "approve:ap_1" },
-		{ label: "Deny", data: "deny:ap_1" },
+		{ label: "Approve", data: "answer:at_1:0" },
+		{ label: "Deny", data: "answer:at_1:1" },
 	];
 
 	it("renders choices and maps a bare digit within the window to the button", () => {

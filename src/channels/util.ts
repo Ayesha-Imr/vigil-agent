@@ -49,10 +49,23 @@ export async function settleWithin(work: Promise<void>, ms: number, onError: (er
 export const BUTTON_REPLY_WINDOW_MS = 30 * 60_000;
 
 /** The text for a message with buttons: the numbered choices appended. */
+/**
+ * Buttons a bare digit may press on apps without real buttons. Approvals are never among them (a
+ * digit meant for one question must not approve another message's command), and the Mute/Less
+ * switches of notices are left out so they do not take the place of a pending question.
+ */
+export function digitButtons(buttons: Button[]): Button[] {
+	return buttons.filter((b) => !/^(approve|deny|mute|less):/.test(b.data));
+}
+
 export function renderWithButtons(text: string, buttons: Button[]): string {
 	if (buttons.length === 0) return text;
-	const choices = buttons.map((b, i) => `${i + 1} to ${b.label}`).join(", ");
-	return `${text}\n\nReply ${choices}`;
+	const lines: string[] = [];
+	const digits = digitButtons(buttons);
+	if (digits.length) lines.push(`Reply ${digits.map((b, i) => `${i + 1} to ${b.label}`).join(", ")}`);
+	const approve = buttons.find((b) => b.data.startsWith("approve:"));
+	if (approve) lines.push(`Reply /approve ${approve.data.slice(8)} or /deny ${approve.data.slice(8)}`);
+	return lines.length ? `${text}\n\n${lines.join("\n")}` : text;
 }
 
 interface Remembered {
@@ -72,8 +85,9 @@ export class ButtonMemory {
 	}
 
 	remember(conversation: string, buttons: Button[], messageId: string, now: number): void {
-		if (buttons.length === 0) return;
-		this.last.set(conversation, { buttons, at: now, messageId });
+		const digits = digitButtons(buttons);
+		if (digits.length === 0) return;
+		this.last.set(conversation, { buttons: digits, at: now, messageId });
 	}
 
 	/**

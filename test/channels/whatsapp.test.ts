@@ -12,7 +12,12 @@ import {
 	renderWithButtons,
 } from "../../src/channels/whatsapp.ts";
 
+// Question choices: the buttons a bare digit may press.
 const approveDeny = [
+	{ label: "Approve", data: "answer:at_1:0" },
+	{ label: "Deny", data: "answer:at_1:1" },
+];
+const realApproval = [
 	{ label: "Approve", data: "approve:ap_1" },
 	{ label: "Deny", data: "deny:ap_1" },
 ];
@@ -24,6 +29,19 @@ describe("renderWithButtons", () => {
 	});
 	it("leaves text without buttons alone", () => {
 		expect(renderWithButtons("hi", [])).toBe("hi");
+	});
+	it("renders approvals as typed commands, never digits", () => {
+		expect(renderWithButtons("Run git push?", realApproval)).toBe("Run git push?\n\nReply /approve ap_1 or /deny ap_1");
+		const mem = new ButtonMemory();
+		mem.remember(jid, realApproval, "m", 0);
+		expect(mem.match(jid, "1", 1)).toBeUndefined();
+	});
+	it("leaves notice Mute/Less switches out, so they do not replace a pending question", () => {
+		const mem = new ButtonMemory();
+		mem.remember(jid, approveDeny, "q", 0);
+		mem.remember(jid, [{ label: "🔕 Mute 1 day", data: "mute:nt_1" }, { label: "👎 Less", data: "less:nt_1" }], "n", 1);
+		expect(mem.match(jid, "1", 2)?.messageId).toBe("q");
+		expect(renderWithButtons("CI red", [{ label: "🔕 Mute 1 day", data: "mute:nt_1" }])).toBe("CI red");
 	});
 });
 
@@ -41,7 +59,7 @@ describe("ButtonMemory", () => {
 		expect(mem.match(jid, "1 please", 1)).toBeUndefined();
 		expect(mem.match(jid, "12", 1)).toBeUndefined();
 		expect(mem.match(jid, "0", 1)).toBeUndefined();
-		expect(mem.match(jid, "1.", 1)?.button.data).toBe("approve:ap_1");
+		expect(mem.match(jid, "1.", 1)?.button.data).toBe("answer:at_1:0");
 	});
 
 	it("only applies to the conversation the buttons went to", () => {

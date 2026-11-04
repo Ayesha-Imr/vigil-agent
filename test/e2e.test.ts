@@ -349,15 +349,15 @@ describe("vigil end to end", () => {
 		h = await harness((ctx) => fauxAssistantMessage(ctx.lastUser.includes("hello") ? "Hi, owner." : "?"), (c) => {
 			c.owner.identities = {};
 		});
-		const code = h.daemon.s.db.getKv<string>("pair:telegram")!;
-		expect(code).toMatch(/^\d{6}$/);
+		const code = h.daemon.s.db.getKv<{ code: string }>("pair:telegram")!.code;
+		expect(code).toMatch(/^[A-Z2-7]{10}$/);
 		await h.channel.receive("hello", { senderId: "777", conversation: "777" });
-		await h.channel.receive("/pair 000000", { senderId: "666", conversation: "666" });
+		await h.channel.receive("/pair AAAAAAAAAA", { senderId: "666", conversation: "666" });
 		await h.settle();
 		expect(h.channel.sent.length).toBe(0); // strangers get nothing, not even an error
 		await h.channel.receive(`/pair ${code}`, { senderId: "777", conversation: "777" });
 		await h.settle();
-		expect(h.channel.texts()[0]).toContain("Paired");
+		expect(h.channel.texts().some((t) => t.includes("Paired."))).toBe(true);
 		expect(h.daemon.s.cfg.owner.identities.telegram).toEqual(["777"]);
 		await h.channel.receive("hello", { senderId: "777", conversation: "777" });
 		await h.settle();
@@ -449,5 +449,25 @@ describe("vigil end to end", () => {
 		expect(why).toContain("sent now [high/ci]");
 		expect(why).toContain("saved for the digest [low/arxiv]");
 		expect(why).toContain("dropped: you already had this news");
+	});
+
+	it("pairing codes expire, and ten wrong guesses lock pairing until restart", async () => {
+		h = await harness(() => say("?"), (c) => {
+			c.owner.identities = {};
+		});
+		const code = h.daemon.s.db.getKv<{ code: string }>("pair:telegram")!.code;
+		for (let i = 0; i < 10; i++) await h.channel.receive(`/pair ${"B".repeat(10)}`, { senderId: "666", conversation: "666" });
+		await h.channel.receive(`/pair ${code}`, { senderId: "777", conversation: "777" });
+		await h.settle();
+		expect(h.daemon.s.cfg.owner.identities.telegram).toBeUndefined();
+
+		const h2 = await harness(() => say("?"), (c) => {
+			c.owner.identities = {};
+		});
+		const code2 = h2.daemon.s.db.getKv<{ code: string }>("pair:telegram")!.code;
+		h2.clock.advance(16 * MINUTE);
+		await h2.channel.receive(`/pair ${code2}`, { senderId: "777", conversation: "777" });
+		expect(h2.daemon.s.cfg.owner.identities.telegram).toBeUndefined();
+		await h2.daemon.stop();
 	});
 });

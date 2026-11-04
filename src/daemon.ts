@@ -42,6 +42,8 @@ export interface DaemonOptions {
 }
 
 export const HEARTBEAT_JOB = "heartbeat";
+const PAIR_TTL_MS = 15 * 60_000;
+const PAIR_MAX_FAILURES = 10;
 export const DREAM_JOB = "dream";
 export const REVIEW_JOB = "weekly review";
 
@@ -560,18 +562,24 @@ export class Daemon {
 	 */
 	private tryPair(msg: InboundMessage): boolean {
 		const s = this.s;
-		const m = /^\/pair\s+(\d{6})\s*$/.exec(msg.text.trim());
+		const m = /^\/pair\s+([A-Za-z2-7]{10})\s*$/.exec(msg.text.trim());
 		if (!m) return false;
-		const code = s.db.getKv<string>(`pair:${msg.channel}`);
-		if (!code || (s.cfg.owner.identities[msg.channel]?.length ?? 0) > 0) return false;
-		if (m[1] !== code) {
+		const offer = s.db.getKv<{ code: string; until: number }>(`pair:${msg.channel}`);
+		if (!offer || (s.cfg.owner.identities[msg.channel]?.length ?? 0) > 0) return false;
+		if (s.clock.now() > offer.until) {
+			s.db.setKv(`pair:${msg.channel}`, null);
+			s.db.event("pair.expired", `pairing code for ${msg.channel} expired; restart vigil for a new one`);
+			return true;
+		}
+		const fails = this.pairFailures.get(msg.channel) ?? 0;
+		if (fails >= PAIR_MAX_FAILURES) return true; // locked until restart; strangers get no reply
+		if (m[1].toUpperCase() !== offer.code) {
+			this.pairFailures.set(msg.channel, fails + 1);
 			s.db.event("pair.failed", `wrong pairing code on ${msg.channel} from ${msg.senderId}`);
-			// Five wrong guesses replace the code, so it cannot be brute-forced.
-			const fails = (s.db.getKv<number>(`pairfail:${msg.channel}`) ?? 0) + 1;
-			s.db.setKv(`pairfail:${msg.channel}`, fails >= 5 ? 0 : fails);
-			if (fails >= 5) {
+			if (fails + 1 >= PAIR_MAX_FAILURES) {
 				s.db.setKv(`pair:${msg.channel}`, null);
-				this.offerPairing();
+				this.log(`${msg.channel}: ${PAIR_MAX_FAILURES} wrong pairing codes; pairing is off until vigil restarts`);
+				s.notifier.notify({ urgency: "high", topic: "vigil:pairing", text: `Someone sent ${PAIR_MAX_FAILURES} wrong pairing codes to the ${msg.channel} bot. Pairing there is off until vigil restarts.` });
 			}
 			return true;
 		}
@@ -580,22 +588,27 @@ export class Daemon {
 		s.db.setKv(`pair:${msg.channel}`, null);
 		this.channels.get(msg.channel)?.setOwner?.(msg.senderId);
 		s.db.event("pair", `paired ${msg.channel} owner ${msg.senderId} (${msg.senderName ?? "?"})`);
+		// Tell the owner's other channels: a pairing they did not make is the first sign of trouble.
+		s.notifier.notify({ urgency: "high", topic: "vigil:pairing", text: `New owner identity paired on ${msg.channel}: ${msg.senderName ?? msg.senderId}. If this was not you, stop vigil and remove it from config.json.` });
 		s.outbox.enqueue({ channel: msg.channel, conversation: msg.conversation, text: `Paired. You're vigil's owner on ${msg.channel}. Say hi, or /help.`, ref: { kind: "reply", id: msg.externalId } });
 		void s.outbox.deliverDue();
 		return true;
 	}
 
-	/** Print a pairing code for every chat channel that has no owner yet. */
+	private readonly pairFailures = new Map<ChannelId, number>();
+
+	/**
+	 * Print a pairing code for every chat channel that has no owner yet: 10 random base32
+	 * characters, valid for 15 minutes from now.
+	 */
 	private offerPairing(): void {
 		for (const id of this.channels.keys()) {
 			if (id === "http" || id === "cli" || id === "ntfy") continue;
 			if ((this.s.cfg.owner.identities[id]?.length ?? 0) > 0) continue;
-			let code = this.s.db.getKv<string>(`pair:${id}`);
-			if (!code) {
-				code = String(randomInt(100000, 1000000));
-				this.s.db.setKv(`pair:${id}`, code);
-			}
-			this.log(`${id} has no owner yet. Send this to the bot from your own account to pair:  /pair ${code}`);
+			const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+			const code = Array.from({ length: 10 }, () => alphabet[randomInt(0, 32)]).join("");
+			this.s.db.setKv(`pair:${id}`, { code, until: this.s.clock.now() + PAIR_TTL_MS });
+			this.log(`${id} has no owner yet. Within 15 minutes, send this to the bot from your own account:  /pair ${code}`);
 		}
 	}
 
@@ -714,6 +727,16 @@ export class Daemon {
 			case "/digest": {
 				const w = s.notifier.takeForReply();
 				say(w.length ? w.map((n) => `- ${n.text}`).join("\n") : "Nothing waiting.");
+				return true;
+			}
+			case "/approve":
+			case "/deny": {
+				// Typed approvals for apps without buttons (WhatsApp, Signal): the id must be named.
+				if (!args[0]?.startsWith("ap_")) {
+					say(`${cmd} <approval id>, as shown in the request.`);
+					return true;
+				}
+				this.handleButton(`${cmd.slice(1).toLowerCase()}:${args[0]}`, say);
 				return true;
 			}
 			case "/why": {
