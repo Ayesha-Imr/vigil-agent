@@ -98,7 +98,15 @@ export class Approvals {
 				done(this.get(id)?.status === "approved" ? "approved" : "expired");
 			}, Math.max(0, a.expires_at - this.clock.now()) + 50);
 			this.waiters.set(id, done);
-			signal?.addEventListener("abort", () => done("expired"), { once: true });
+			// Nobody will run the call any more: expire the request so a late tap cannot approve it.
+			signal?.addEventListener(
+				"abort",
+				() => {
+					this.db.run("UPDATE approvals SET status = 'expired' WHERE id = ? AND status IN ('pending', 'approved')", id);
+					done("expired");
+				},
+				{ once: true },
+			);
 		});
 	}
 

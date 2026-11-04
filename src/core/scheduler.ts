@@ -55,7 +55,7 @@ export function nextRunAt(kind: JobKind, spec: string, after: number, tz: string
 		}
 		case "every": {
 			const minutes = Number(spec);
-			if (!Number.isFinite(minutes) || minutes < 1) throw new Error(`"every" needs whole minutes >= 1, got "${spec}"`);
+			if (!Number.isInteger(minutes) || minutes < 1) throw new Error(`"every" needs whole minutes >= 1, got "${spec}"`);
 			return after + minutes * MINUTE;
 		}
 		case "at": {
@@ -117,7 +117,7 @@ export class Scheduler {
 	ensure(input: { name: string; kind: JobKind; spec: string; prompt: string; action: JobAction }): Job {
 		const existing = this.db.get<Job>("SELECT * FROM jobs WHERE name = ? AND created_by = 'system'", input.name);
 		if (!existing) return this.create({ ...input, createdBy: "system" });
-		if (existing.spec !== input.spec || existing.kind !== input.kind || existing.prompt !== input.prompt) {
+		if (existing.spec !== input.spec || existing.kind !== input.kind || existing.prompt !== input.prompt || existing.action !== input.action) {
 			const next = nextRunAt(input.kind, input.spec, this.clock.now(), this.tz());
 			this.db.run(
 				"UPDATE jobs SET kind = ?, spec = ?, prompt = ?, action = ?, next_run_at = ?, enabled = 1 WHERE id = ?",
@@ -158,16 +158,21 @@ export class Scheduler {
 					JSON.stringify({ jobId: job.id, slot, coalesced }),
 					now,
 				);
+				const fresh = ins.changes === 1;
+				// A slot that already has its trigger (a replay) only moves the schedule on; it starts no run,
+				// so it must not mark the job running, or nothing would ever complete it.
 				this.db.run(
-					`UPDATE jobs SET running_since = ?, last_slot = ?, next_run_at = ?, runs = runs + 1,
-					 enabled = CASE WHEN ? IS NULL AND kind = 'at' THEN 0 ELSE enabled END WHERE id = ?`,
+					`UPDATE jobs SET running_since = CASE WHEN ? THEN ? ELSE running_since END, last_slot = ?, next_run_at = ?,
+					 runs = runs + ?, enabled = CASE WHEN ? IS NULL AND kind = 'at' THEN 0 ELSE enabled END WHERE id = ?`,
+					fresh ? 1 : 0,
 					now,
 					slot,
 					next,
+					fresh ? 1 : 0,
 					next,
 					job.id,
 				);
-				if (ins.changes === 1) runs.push({ job, slot, coalesced, triggerId: ins.lastInsertRowid });
+				if (fresh) runs.push({ job, slot, coalesced, triggerId: ins.lastInsertRowid });
 			}
 			return runs;
 		});

@@ -40,18 +40,15 @@ export const defaultFetcher: Fetcher = async (url) => {
 	return await res.text();
 };
 
+const ENTITIES: Record<string, string> = { nbsp: " ", amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", "#39": "'" };
+
 /** Reduce HTML to visible text, so markup churn does not count as change. */
 export function htmlToText(html: string): string {
 	return html
 		.replace(/<script[\s\S]*?<\/script>/gi, " ")
 		.replace(/<style[\s\S]*?<\/style>/gi, " ")
 		.replace(/<[^>]+>/g, " ")
-		.replace(/&nbsp;/g, " ")
-		.replace(/&amp;/g, "&")
-		.replace(/&lt;/g, "<")
-		.replace(/&gt;/g, ">")
-		.replace(/&#39;|&apos;/g, "'")
-		.replace(/&quot;/g, '"')
+		.replace(/&(nbsp|amp|lt|gt|quot|apos|#39);/g, (_m, e: string) => ENTITIES[e] ?? _m)
 		.replace(/[ \t]+/g, " ")
 		.replace(/\n\s*\n+/g, "\n")
 		.trim();
@@ -170,18 +167,29 @@ export class Watchers {
 		snapshot = snapshot.slice(0, MAX_SNAPSHOT);
 		const first = w.last_value === null;
 		const changed = !first && w.last_value !== snapshot;
-		this.db.run("UPDATE watchers SET last_value = ?, last_checked_at = ?, last_error = NULL WHERE id = ?", snapshot, now, w.id);
-		if (!changed) return undefined;
-		const summary = this.summarize(w, w.last_value ?? "", snapshot);
-		if (!summary.trim()) return undefined;
-		const hash = createHash("sha256").update(snapshot).digest("hex").slice(0, 16);
-		const ins = this.db.run(
-			`INSERT INTO triggers (source, external_id, kind, strength, payload, created_at)
-			 VALUES ('watch', ?, 'watch', 'inferred', ?, ?) ON CONFLICT(source, external_id) DO NOTHING`,
-			`${w.id}:${hash}`,
-			JSON.stringify({ watcherId: w.id, summary }),
-			now,
-		);
+		const summary = changed ? this.summarize(w, w.last_value ?? "", snapshot) : "";
+		// Each change is its own event: a page that returns to an earlier state is news again. The
+		// snapshot moves by compare-and-swap on the value this check started from, so a replayed or
+		// overlapping check of the same transition records nothing; snapshot and trigger are stored in
+		// one transaction, so a crash cannot keep the new value and lose the change.
+		const to = createHash("sha256").update(snapshot).digest("hex").slice(0, 12);
+		const ins = this.db.tx(() => {
+			const moved = this.db.run(
+				"UPDATE watchers SET last_value = ?, last_checked_at = ?, last_error = NULL WHERE id = ? AND last_value IS ?",
+				snapshot,
+				now,
+				w.id,
+				w.last_value,
+			);
+			if (moved.changes !== 1 || !changed || !summary.trim()) return { changes: 0, lastInsertRowid: 0 };
+			return this.db.run(
+				`INSERT INTO triggers (source, external_id, kind, strength, payload, created_at)
+				 VALUES ('watch', ?, 'watch', 'inferred', ?, ?) ON CONFLICT(source, external_id) DO NOTHING`,
+				`${w.id}:${now}:${to}:${randomUUID().slice(0, 8)}`,
+				JSON.stringify({ watcherId: w.id, summary }),
+				now,
+			);
+		});
 		if (ins.changes !== 1) return undefined;
 		return { watcher: w, summary, triggerId: ins.lastInsertRowid };
 	}

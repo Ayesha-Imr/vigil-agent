@@ -18,7 +18,7 @@ import {
 } from "discord.js";
 import type { ChannelId } from "../config.ts";
 import { split } from "../core/outbox.ts";
-import { type Button, type Channel, type InboundMessage, type OutboundMessage, PermanentSendError, type SendResult } from "./types.ts";
+import { type Attachment, type Button, type Channel, type InboundMessage, type OutboundMessage, PermanentSendError, type SendResult } from "./types.ts";
 import { errorText, type Log, stderrLog, truncate } from "./util.ts";
 
 const ID: ChannelId = "discord";
@@ -138,6 +138,15 @@ export class DiscordChannel implements Channel {
 		};
 	}
 
+	/** Download an attachment from Discord's CDN (only cdn.discordapp.com URLs are fetched). */
+	async download(attachment: Attachment): Promise<{ data: Buffer; mimeType: string }> {
+		const url = new URL(attachment.ref);
+		if (!/(^|\.)discord(app)?\.(com|net)$/.test(url.hostname)) throw new Error(`refusing to fetch ${url.hostname}`);
+		const res = await fetch(url, { signal: AbortSignal.timeout(60_000) });
+		if (!res.ok) throw new Error(`discord attachment: HTTP ${res.status}`);
+		return { data: Buffer.from(await res.arrayBuffer()), mimeType: attachment.mimeType ?? res.headers.get("content-type") ?? "application/octet-stream" };
+	}
+
 	/** Discord shows "typing…" for about ten seconds per call. */
 	async typing(conversation: string): Promise<void> {
 		try {
@@ -213,6 +222,14 @@ export function fromDiscordMessage(message: Message): InboundMessage | undefined
 		kind: "message",
 		text: parts.join("\n"),
 		replyTo: message.reference?.messageId ? `${message.reference.channelId}:${message.reference.messageId}` : undefined,
+		attachments: message.attachments.size
+			? [...message.attachments.values()].map((a) => ({
+					kind: a.contentType?.startsWith("image/") ? ("photo" as const) : a.contentType?.startsWith("audio/") ? ("voice" as const) : ("document" as const),
+					ref: a.url,
+					name: a.name,
+					mimeType: a.contentType ?? undefined,
+				}))
+			: undefined,
 		at: message.createdTimestamp,
 	};
 }

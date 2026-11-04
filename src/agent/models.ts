@@ -17,9 +17,9 @@ export function classifyError(message: string): FailureKind {
 	const m = message.toLowerCase();
 	if (/context|too long|maximum context|token limit/.test(m)) return "context";
 	if (/quota|usage limit|insufficient|billing|exceeded your|plan limit|credits/.test(m)) return "quota";
-	if (/429|rate.?limit|too many requests|overloaded/.test(m)) return "rate_limit";
-	if (/401|403|unauthori[sz]ed|forbidden|invalid api key|no api key|expired token|login/.test(m)) return "auth";
-	if (/5\d\d|server error|bad gateway|unavailable|internal error/.test(m)) return "server";
+	if (/\b429\b|rate.?limit|too many requests|overloaded/.test(m)) return "rate_limit";
+	if (/\b40[13]\b|unauthori[sz]ed|forbidden|invalid api key|no api key|expired token|log ?in again|not logged in/.test(m)) return "auth";
+	if (/\b5\d\d\b|server error|bad gateway|unavailable|internal error/.test(m)) return "server";
 	if (/econn|etimedout|enotfound|socket|network|fetch failed|timeout/.test(m)) return "network";
 	return "other";
 }

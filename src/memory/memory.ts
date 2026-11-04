@@ -118,7 +118,7 @@ export class Memory {
 			for (let i = 0; i < lines.length; i++) {
 				const window = lines.slice(i, i + 3).join(" ");
 				const words = tokenize(lines[i]);
-				if (!words.length) continue;
+				if (!words.length || lines[i].startsWith("#")) continue;
 				const set = new Set(tokenize(window));
 				const matched = terms.filter((t) => set.has(t)).length;
 				if (!matched) continue;
