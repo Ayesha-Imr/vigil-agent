@@ -59,6 +59,20 @@ describe("worker pool findings", () => {
 		h.daemon.s.tickets.report(t.id, "ready", "done");
 		expect(h.daemon.s.tickets.get(t.id)?.status).toBe("open");
 	});
+	it("W3c: the session file is recorded before the first prompt, so a crash mid-turn resumes it", async () => {
+		let seen: string | null | undefined;
+		let id = "";
+		h = await harness((ctx) => {
+			if (isWorker(ctx) && seen === undefined) seen = h.daemon.s.tickets.get(id)?.session_file;
+			return fauxAssistantMessage("x");
+		});
+		const t = h.daemon.s.tickets.create({ title: "T", mandate: { request: "r", scope: "s", strength: "explicit" }, origin: { channel: "telegram", conversation: "42" } });
+		id = t.id;
+		h.daemon.s.tickets.addInput(t.id, "owner_message", "use the staging database, not prod");
+		h.daemon.workers.pump();
+		for (let i = 0; i < 100 && seen === undefined; i++) await new Promise((r) => setTimeout(r, 20));
+		expect(seen).toBeTruthy();
+	});
 	it("W4: no worker model and a pending input does not freeze the event loop", async () => {
 		h = await harness(() => fauxAssistantMessage("x"), (c) => {
 			c.models.worker = ["nonexistent/*"];
@@ -112,6 +126,23 @@ describe("outbox findings", () => {
 		const r = keys.find((k) => k.ref_kind === "ticket");
 		expect(q?.order_key).toBe(`${t.id}:telegram:42`);
 		expect(r?.order_key).toBe(q?.order_key);
+	});
+	it("F1c: a helper's approval ask carries its ticket's order key", async () => {
+		h = await harness((ctx) => {
+			if (ctx.system.includes("You are a helper agent")) {
+				return ctx.lastToolResult ? fauxAssistantMessage("done") : fauxAssistantMessage([fauxToolCall("bash", { command: "sudo true" })], { stopReason: "toolUse" });
+			}
+			if (isWorker(ctx) && !ctx.lastToolResult) return fauxAssistantMessage([fauxToolCall("delegate", { task: "t", read_only: false })], { stopReason: "toolUse" });
+			return fauxAssistantMessage("x");
+		});
+		const t = h.daemon.s.tickets.create({ title: "T", mandate: { request: "r", scope: "s", strength: "explicit" }, origin: { channel: "telegram", conversation: "42" } });
+		h.daemon.workers.pump();
+		let ask: { order_key: string | null } | undefined;
+		for (let i = 0; i < 150 && !ask; i++) {
+			await new Promise((r) => setTimeout(r, 20));
+			ask = h.daemon.s.db.get<{ order_key: string | null }>("SELECT order_key FROM outbox WHERE ref_kind = 'approval'");
+		}
+		expect(ask?.order_key).toBe(`${t.id}:telegram:42`);
 	});
 });
 

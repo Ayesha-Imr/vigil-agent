@@ -28,6 +28,7 @@ export class WorkerPool {
 	private readonly sessions = new Map<string, AgentSession>();
 	/** When a ticket's worker last failed to start; it waits a minute before the next try. */
 	private readonly failedStart = new Map<string, number>();
+	private stopping = false;
 	/** Consecutive turns cut by a timeout or a model error, per ticket. */
 	private readonly cutTurns = new Map<string, number>();
 
@@ -41,7 +42,7 @@ export class WorkerPool {
 
 	/** Start every runnable ticket that fits in a slot. */
 	pump(): void {
-		if (this.s.paused()) return;
+		if (this.s.paused() || this.stopping) return;
 		const max = this.s.cfg.workers.max;
 		for (const t of this.s.tickets.runnable()) {
 			if (this.running.has(t.id)) continue;
@@ -55,6 +56,8 @@ export class WorkerPool {
 			const run = this.run(t).then(
 				(started) => started,
 				(err: unknown) => {
+					// During shutdown the run was aborted on purpose; its ticket is recovered on restart.
+					if (this.stopping) return false;
 					// Never strand a ticket in "working" without a word.
 					this.s.db.event("worker.error", `${t.id}: ${(err as Error)?.stack ?? err}`);
 					this.s.tickets.report(t.id, "failed", `The worker stopped on an internal error: ${(err as Error)?.message ?? err}`);
@@ -63,6 +66,7 @@ export class WorkerPool {
 				},
 			).then((started) => {
 				this.running.delete(t.id);
+				if (this.stopping) return;
 				this.dispose(t.id);
 				// A ticket whose worker could not even start is retried by the 15 s timer, not right
 				// away: an immediate re-pump loops on promise callbacks and starves the event loop
@@ -85,6 +89,7 @@ export class WorkerPool {
 		]
 			.filter(Boolean)
 			.join("\n");
+		const route = () => (t.origin.channel === "system" ? undefined : { channel: t.origin.channel, conversation: t.origin.conversation });
 		const { session } = await buildSession(this.s, {
 			role: "worker",
 			cwd: t.dir,
@@ -101,11 +106,11 @@ export class WorkerPool {
 			customTools:
 				t.mandate.strength === "inferred"
 					? [...workerTools(this.s, t.id, { inferred: true }), ...webTools(() => this.s.cfg.search)]
-					: [...workerTools(this.s, t.id), ...webTools(() => this.s.cfg.search), delegateTool(this.s, t.id, t.dir)],
+					: [...workerTools(this.s, t.id), ...webTools(() => this.s.cfg.search), delegateTool(this.s, t.id, t.dir, route)],
 			requester: `ticket ${t.id} (${t.title})`,
 			ticketId: t.id,
 			skills: true,
-			approvalRoute: () => (t.origin.channel === "system" ? undefined : { channel: t.origin.channel, conversation: t.origin.conversation }),
+			approvalRoute: route,
 		});
 		this.sessions.set(t.id, session);
 		return session;
@@ -127,6 +132,9 @@ export class WorkerPool {
 		// The owner may have stopped the ticket while the session was being built (finding W1).
 		const t = this.s.tickets.get(t0.id);
 		if (!t || t.stopped_by_owner || t.status === "ended") return true;
+		// Record the session file before the first prompt: a crash mid-turn must resume the session
+		// that holds the owner's message, not start a new one without it (finding W3c).
+		if (session.sessionFile) this.s.tickets.setSessionFile(t.id, session.sessionFile);
 		// Loop while inputs keep arriving during turns.
 		for (let turn = 0; turn < 20; turn++) {
 			const inputs = this.s.tickets.takeInputs(t.id);
@@ -197,8 +205,12 @@ export class WorkerPool {
 		this.sessions.delete(id);
 	}
 
+	/** Abort every run and wait (briefly) for them to end, so none writes after the database closes. */
 	async stopAll(): Promise<void> {
+		this.stopping = true;
 		for (const s of this.sessions.values()) await s.abort().catch(() => {});
+		const runs = [...this.running.values()];
+		await Promise.race([Promise.allSettled(runs), new Promise((r) => setTimeout(r, 10_000).unref?.())]);
 		for (const s of this.sessions.values()) s.dispose();
 		this.sessions.clear();
 	}

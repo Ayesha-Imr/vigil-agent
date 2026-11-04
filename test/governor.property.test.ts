@@ -146,7 +146,7 @@ const policies: fc.Arbitrary<GovernorPolicy> = fc.record({
 });
 
 const start = Date.UTC(2026, 10, 4, 6, 17, 0);
-const params = { numRuns: 400 };
+const params = { numRuns: Number(process.env.PROP_RUNS ?? 400) };
 
 describe("attention governor: invariants under random use", () => {
 	it("Budget: individual high/normal interrupts stay within the rolling 24h cap and spacing", () => {
@@ -188,7 +188,9 @@ describe("attention governor: invariants under random use", () => {
 			fc.property(fc.array(action, { maxLength: 120 }), policies, (actions, policy) => {
 				const { sent, muteLog } = run(actions, policy, start);
 				for (const s of sent) {
-					const muted = muteLog.some((m) => m.topic === s.notice.topic && m.step < s.step && s.at < m.until);
+					// The owner's latest word on a topic wins: muting again for less time shortens the mute.
+					const last = muteLog.filter((m) => m.topic === s.notice.topic && m.step < s.step).at(-1);
+					const muted = last !== undefined && s.at < last.until;
 					expect(muted, `${s.notice.id} on muted topic ${s.notice.topic} sent ${s.how}`).toBe(false);
 				}
 			}),
