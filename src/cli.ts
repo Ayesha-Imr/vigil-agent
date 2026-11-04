@@ -6,7 +6,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { createInterface } from "node:readline/promises";
+import { createInterface } from "node:readline";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
@@ -46,14 +46,32 @@ async function runtimeFor(p: Paths): Promise<ModelRuntime> {
 	return await ModelRuntime.create({ authPath: join(p.agentDir, "auth.json"), modelsPath: join(p.agentDir, "models.json"), allowModelNetwork: true });
 }
 
-async function ask(rl: ReturnType<typeof createInterface>, q: string, def = ""): Promise<string> {
+/**
+ * Line input that works for a terminal and for piped answers alike: readline's question() drops
+ * lines that arrive before it is called, which loses every answer of a piped setup.
+ */
+function lineReader(): { question: (prompt: string) => Promise<string>; close: () => void } {
+	const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: process.stdin.isTTY });
+	const it = rl[Symbol.asyncIterator]();
+	return {
+		question: async (prompt) => {
+			process.stdout.write(prompt);
+			const next = await it.next();
+			if (!process.stdin.isTTY) process.stdout.write("\n");
+			return next.done ? "" : String(next.value);
+		},
+		close: () => rl.close(),
+	};
+}
+
+async function ask(rl: ReturnType<typeof lineReader>, q: string, def = ""): Promise<string> {
 	const a = (await rl.question(def ? `${q} [${def}]: ` : `${q}: `)).trim();
 	return a || def;
 }
 
 async function init(p: Paths): Promise<void> {
 	const cfg: VigilConfig = existsSync(p.config) ? loadConfig(p) : defaultConfig();
-	const rl = createInterface({ input: process.stdin, output: process.stdout });
+	const rl = lineReader();
 	console.log(`Setting up vigil in ${p.home}. Enter keeps the value in brackets.\n`);
 	cfg.owner.name = await ask(rl, "Your name", cfg.owner.name === "owner" ? "" : cfg.owner.name);
 	cfg.owner.timezone = await ask(rl, "Your time zone (IANA, e.g. Asia/Karachi)", cfg.owner.timezone);
@@ -107,7 +125,7 @@ async function init(p: Paths): Promise<void> {
 
 async function login(p: Paths, which: string): Promise<void> {
 	const runtime = await runtimeFor(p);
-	const rl = createInterface({ input: process.stdin, output: process.stdout });
+	const rl = lineReader();
 	try {
 		if (which === "codex" || which === "openai-codex") {
 			await runtime.login("openai-codex", "oauth", {
