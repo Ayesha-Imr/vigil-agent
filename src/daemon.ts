@@ -427,6 +427,10 @@ export class Daemon {
 		}
 
 		const text = msg.text.trim();
+		if (/^\/login\b/i.test(text)) {
+			// The stored copy of the message must not keep an API key.
+			s.db.run("UPDATE triggers SET payload = ? WHERE id = ?", JSON.stringify({ ...msg, text: "/login [redacted]" }), triggerId);
+		}
 		if (text.startsWith("/")) {
 			const handled = await this.handleCommand(text, to, say);
 			if (handled) {
@@ -438,8 +442,15 @@ export class Daemon {
 		// A reply to something vigil sent goes to what that message was about.
 		const ref = msg.replyTo ? s.outbox.lookupRef(msg.channel, msg.replyTo) : undefined;
 		if (ref?.kind === "attention") {
-			const at = s.db.get<{ ticket_id: string; question: string }>("SELECT ticket_id, question FROM attentions WHERE id = ?", ref.id);
-			if (at) {
+			const at = s.db.get<{ ticket_id: string; question: string; status: string }>("SELECT ticket_id, question, status FROM attentions WHERE id = ?", ref.id);
+			if (at && at.status !== "open") {
+				// Already answered: treat this as a follow-up to the ticket, keeping the first answer.
+				if (s.tickets.addInput(at.ticket_id, "owner_message", text)) {
+					this.workers.pump();
+					done("done", `follow-up to ${at.ticket_id}`);
+					return;
+				}
+			} else if (at) {
 				s.db.run("UPDATE attentions SET status = 'answered', answer = ?, answered_at = ? WHERE id = ?", text, s.clock.now(), ref.id);
 				s.tickets.addInput(at.ticket_id, "answer", `Q: ${at.question}\nA: ${text}`);
 				this.workers.pump();
