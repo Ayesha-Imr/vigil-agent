@@ -94,6 +94,34 @@ export function panelRoutes(daemon: () => Daemon | undefined): Record<string, Ro
 			const d = daemon();
 			return d ? { body: panelState(d) } : { status: 503, body: { error: "starting" } };
 		},
+		"GET /api/status": () => {
+			const d = daemon();
+			return d ? { body: { text: d.statusText() } } : { status: 503, body: { error: "starting" } };
+		},
+		"POST /api/notify": (req) => {
+			const d = daemon();
+			if (!d) return { status: 503, body: { error: "starting" } };
+			const b = (req.body ?? {}) as { text?: string; urgency?: string; topic?: string; dedup_key?: string };
+			if (!b.text) return { status: 400, body: { error: "text is required" } };
+			const urgency = (["critical", "high", "normal", "low"] as const).find((u) => u === b.urgency) ?? "normal";
+			const n = d.s.notifier.notify({ text: b.text.slice(0, 600), urgency, topic: b.topic ?? "api", dedupKey: b.dedup_key });
+			void d.s.outbox.deliverDue();
+			return { body: { id: n.id, decision: n.decision } };
+		},
+		"POST /api/ticket": (req) => {
+			const d = daemon();
+			if (!d) return { status: 503, body: { error: "starting" } };
+			const b = (req.body ?? {}) as { title?: string; request?: string; scope?: string };
+			if (!b.request) return { status: 400, body: { error: "request is required" } };
+			const route = d.s.ownerRoute();
+			const t = d.s.tickets.create({
+				title: (b.title ?? b.request).slice(0, 80),
+				mandate: { request: b.request, scope: b.scope ?? "As requested by the owner through the API.", strength: "explicit" },
+				origin: route ? { channel: route.channel, conversation: route.conversation } : { channel: "system", conversation: "" },
+			});
+			d.workers.pump();
+			return { body: { id: t.id, title: t.title } };
+		},
 		"POST /api/action": async (req) => {
 			const d = daemon();
 			if (!d) return { status: 503, body: { error: "starting" } };

@@ -40,7 +40,8 @@
     "verification",
     "docs",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "pi"
   ],
   "repository": {
     "type": "git",
@@ -53,6 +54,15 @@
     "proactive",
     "telegram",
     "formal-verification",
-    "tla+"
-  ]
+    "tla+",
+    "pi-package"
+  ],
+  "pi": {
+    "extensions": [
+      "./pi/vigil-remote.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  }
 }

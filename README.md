@@ -127,6 +127,22 @@ Set an [ntfy](https://ntfy.sh) topic in `vigil init` and install the ntfy app. C
 out at top priority. With `channels.http.publicUrl` set, notices also get action buttons, each with
 its own signed URL, so the API token never leaves your server.
 
+### From pi on your laptop
+
+The repo is also a [pi package](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md).
+Install it into your everyday pi, and pi can hand long tasks to vigil (`vigil_ticket`), push a
+notice to your phone (`vigil_notify`), or ask vigil what it knows (`vigil_ask`). When a pi run
+takes longer than 10 minutes, your phone gets a ping, so you can walk away from the laptop. You
+also get vigil's skills, including formal verification.
+
+```bash
+pi install git:github.com/Ayesha-Imr/vigil-agent
+```
+
+```bash
+export VIGIL_URL=https://vigil.your-tailnet.ts.net VIGIL_HTTP_TOKEN=…   # then: pi, and /vigil status
+```
+
 ## Run it always
 
 **systemd (VPS, home server):**
