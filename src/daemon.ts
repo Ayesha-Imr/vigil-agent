@@ -319,7 +319,8 @@ export class Daemon {
 		}
 		const to: OwnerRoute = { channel: msg.channel, conversation: msg.conversation };
 		const say = (text: string) => {
-			s.outbox.enqueue({ ...to, text, ref: { kind: "reply", id: msg.externalId } });
+			// The HTTP API answers synchronously by matching replyTo to the request's id.
+			s.outbox.enqueue({ ...to, text, ref: { kind: "reply", id: msg.externalId }, replyTo: msg.channel === "http" ? msg.externalId : undefined });
 			void s.outbox.deliverDue();
 		};
 

@@ -134,7 +134,7 @@ export class Concierge {
 	}
 
 	private reply(input: Extract<ConciergeInput, { kind: "owner" }>, text: string): void {
-		sendSolicited(this.s, { channel: input.channel, conversation: input.conversation }, text, { kind: "reply", id: input.externalId }, { urgent: true, replyTo: undefined });
+		sendSolicited(this.s, { channel: input.channel, conversation: input.conversation }, text, { kind: "reply", id: input.externalId }, { urgent: true, replyTo: input.channel === "http" ? input.externalId : undefined });
 		this.s.outbox.deliverDue().catch(() => {});
 	}
 

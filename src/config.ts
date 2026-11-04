@@ -24,7 +24,8 @@ export interface VigilConfig {
 		discord?: { token?: string };
 		whatsapp?: { enabled: boolean };
 		ntfy?: { server: string; topic: string; token?: string };
-		http?: { port: number; token?: string };
+		/** `publicUrl` is where the phone can reach this server (for ntfy action buttons), if anywhere. */
+		http?: { port: number; token?: string; publicUrl?: string };
 	};
 	/** Ordered `provider/model` candidates per role. The first one with credentials wins. */
 	models: Record<ModelRole, string[]>;
