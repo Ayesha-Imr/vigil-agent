@@ -366,4 +366,20 @@ describe("vigil end to end", () => {
 		await h.settle();
 		expect(h.daemon.s.cfg.owner.identities.telegram).toEqual(["777"]);
 	});
+
+	it("tells the concierge what a worker reported, so a later question has context", async () => {
+		h = await harness((ctx) => {
+			if (isConcierge(ctx)) {
+				if (ctx.lastUser.includes("what did you find")) return say(ctx.lastUser.includes("reported ready: Cheapest is TAP") ? "TAP, $438." : "no idea");
+				return ctx.lastToolResult ? say("On it.") : call("spawn_ticket", { title: "Flights", request: "find flights", scope: "research" });
+			}
+			if (isWorker(ctx)) return ctx.lastToolResult ? say("x") : call("report", { kind: "ready", summary: "Cheapest is TAP at $438." });
+			return say("?");
+		});
+		await h.channel.receive("find me flights to Lisbon");
+		await h.settle();
+		await h.channel.receive("what did you find?");
+		await h.settle();
+		expect(h.channel.texts().at(-1)).toBe("TAP, $438.");
+	});
 });

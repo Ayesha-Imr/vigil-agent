@@ -10,7 +10,7 @@ import type { ChannelId } from "../config.ts";
 import type { Origin } from "../core/tickets.ts";
 import { localMinuteOfDay } from "../core/time.ts";
 import { CONCIERGE_PROMPT, fill } from "./prompts.ts";
-import { sendSolicited, type Services } from "./services.ts";
+import { sendSolicited, type Services, takeConciergeNotes } from "./services.ts";
 import { buildSession, promptWithFallback } from "./sessions.ts";
 import { conciergeTools } from "./tools.ts";
 import { webTools } from "./web.ts";
@@ -139,10 +139,14 @@ export class Concierge {
 			return;
 		}
 
+		// What happened elsewhere since the last turn, so the conversation knows about it.
+		const notes = takeConciergeNotes(this.s);
+		const since = notes.length ? `(Since your last turn, for context; already handled: ${notes.map((n) => `\n- ${n}`).join("")})\n\n` : "";
+
 		if (input.kind === "owner") {
 			this.origin = { channel: input.channel, conversation: input.conversation, externalId: input.externalId };
 			this.s.memory.journal("owner", input.text.replace(/^\[[^\]]+\]\s*/, ""));
-			let text = input.kind === "owner" && input.text.startsWith("[") ? input.text : this.tag(input);
+			let text = since + (input.text.startsWith("[") ? input.text : this.tag(input));
 			// Peek only: the notices count as told once a reply mentioning them is stored (below).
 			const waiting = this.s.notifier.waiting();
 			if (waiting.length) {
@@ -163,7 +167,7 @@ export class Concierge {
 		}
 
 		this.origin = { channel: "system", conversation: "" };
-		const r = await promptWithFallback(this.s, session, "concierge", `[${input.tag}] ${input.text}`);
+		const r = await promptWithFallback(this.s, session, "concierge", `${since}[${input.tag}] ${input.text}`);
 		this.s.db.setKv(SESSION_KEY, session.sessionFile ?? null);
 		if (this.preempted === input) {
 			// The owner interrupted this run; it goes again after their message, once.

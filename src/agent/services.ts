@@ -47,6 +47,24 @@ export interface Services {
 	typing: (channel: ChannelId, conversation: string) => Promise<void>;
 }
 
+/**
+ * Leave the concierge a note about something that happened elsewhere (a worker's result, a question
+ * it asked, an action triage took), so the conversation knows when the owner asks about it. Notes
+ * are stored, and folded into the concierge's next turn; they never start a turn themselves.
+ */
+export function noteToConcierge(s: Services, text: string): void {
+	const notes = s.db.getKv<string[]>("concierge.notes") ?? [];
+	notes.push(text.slice(0, 600));
+	s.db.setKv("concierge.notes", notes.slice(-30));
+}
+
+/** Take the pending notes (and clear them). */
+export function takeConciergeNotes(s: Services): string[] {
+	const notes = s.db.getKv<string[]>("concierge.notes") ?? [];
+	if (notes.length) s.db.setKv("concierge.notes", []);
+	return notes;
+}
+
 /** Send a message the owner asked for (a reply or a ticket result): no budget, but quiet hours hold it. */
 export function sendSolicited(
 	s: Services,

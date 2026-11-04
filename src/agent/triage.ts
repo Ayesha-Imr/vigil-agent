@@ -5,7 +5,7 @@
 import { createHash } from "node:crypto";
 import type { Change } from "../core/watchers.ts";
 import { fill, TRIAGE_PROMPT } from "./prompts.ts";
-import type { Services } from "./services.ts";
+import { noteToConcierge, type Services } from "./services.ts";
 import { buildSession, promptWithFallback } from "./sessions.ts";
 import { type TriageDecision, triageTools } from "./tools.ts";
 
@@ -56,6 +56,9 @@ export async function triage(s: Services, change: Change): Promise<TriageDecisio
 		}
 		return d;
 	}
+	// Only facts vigil itself wrote: the triage text comes from untrusted page content and must not
+	// reach the concierge, which has tools (the rule of two).
+	if (d.action !== "ignore") noteToConcierge(s, `watcher "${w.name}" saw a change; triage chose to ${d.action} (urgency ${d.urgency ?? "n/a"})`);
 	if (d.action === "notify" && d.text) {
 		s.notifier.notify({
 			urgency: d.urgency ?? "normal",
