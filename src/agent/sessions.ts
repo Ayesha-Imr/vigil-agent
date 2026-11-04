@@ -90,7 +90,9 @@ export async function buildSession(s: Services, spec: SessionSpec): Promise<Buil
 				requester,
 				cwd: spec.cwd,
 				ask: (id, text) => {
-					const route = spec.approvalRoute?.() ?? s.ownerRoute();
+					// Approvals need buttons and an owner-checked chat: never the HTTP API or ntfy.
+					const from = spec.approvalRoute?.();
+					const route = from && from.channel !== "http" && from.channel !== "ntfy" ? from : s.ownerRoute();
 					if (!route) return;
 					s.outbox.enqueue({
 						...route,
