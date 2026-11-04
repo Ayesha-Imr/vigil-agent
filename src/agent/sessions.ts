@@ -137,7 +137,7 @@ export async function buildSession(s: Services, spec: SessionSpec): Promise<Buil
 		cwd: spec.cwd,
 		agentDir: s.paths.agentDir,
 		model,
-		thinkingLevel: spec.role === "triage" ? "low" : "medium",
+		thinkingLevel: model.reasoning ? (s.cfg.thinking?.[spec.role] ?? "medium") : "off",
 		modelRuntime: s.modelRuntime,
 		resourceLoader: loader,
 		sessionManager,

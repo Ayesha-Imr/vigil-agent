@@ -17,7 +17,7 @@ import { webTools } from "./web.ts";
 
 export type ConciergeInput =
 	| { kind: "owner"; channel: ChannelId; conversation: string; externalId: string; text: string; at: number; triggerIds?: number[]; attachments?: Attachment[] }
-	| { kind: "system"; tag: string; text: string; done?: (result: string) => void };
+	| { kind: "system"; tag: string; text: string; done?: (result: string) => void; retried?: boolean };
 
 const SESSION_KEY = "concierge.session";
 /** A reply that means "nothing to say". */
@@ -29,6 +29,7 @@ export class Concierge {
 	private readonly queue: ConciergeInput[] = [];
 	private current: ConciergeInput | undefined;
 	private busy = false;
+	private preempted: ConciergeInput | undefined;
 	private origin: Origin = { channel: "system", conversation: "" };
 
 	constructor(s: Services) {
@@ -59,7 +60,19 @@ export class Concierge {
 			void this.session.steer(this.tag(input));
 			return;
 		}
-		this.queue.push(input);
+		if (input.kind === "owner") {
+			// The owner goes first: ahead of queued system work, and a system run in progress yields
+			// (it is aborted and runs again afterwards) so a heartbeat never keeps the owner waiting.
+			const at = this.queue.findIndex((q) => q.kind === "system");
+			if (at === -1) this.queue.push(input);
+			else this.queue.splice(at, 0, input);
+			if (cur?.kind === "system" && this.session?.isStreaming) {
+				this.preempted = cur;
+				void this.session.abort();
+			}
+		} else {
+			this.queue.push(input);
+		}
 		void this.pump();
 	}
 
@@ -148,6 +161,13 @@ export class Concierge {
 		this.origin = { channel: "system", conversation: "" };
 		const r = await promptWithFallback(this.s, session, "concierge", `[${input.tag}] ${input.text}`);
 		this.s.db.setKv(SESSION_KEY, session.sessionFile ?? null);
+		if (this.preempted === input) {
+			// The owner interrupted this run; it goes again after their message, once.
+			this.preempted = undefined;
+			if (!input.retried) this.queue.push({ ...input, retried: true, text: `${input.text}\n(This run was interrupted by a message from the owner; start it again.)` });
+			else input.done?.("interrupted twice; skipped");
+			return;
+		}
 		input.done?.(r.error ? `error: ${r.error}` : r.text.slice(0, 500));
 	}
 

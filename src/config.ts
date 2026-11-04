@@ -42,6 +42,8 @@ export interface VigilConfig {
 	approvals: { ttlMinutes: number };
 	/** Web search backend for the web_search tool. */
 	search: SearchConfig;
+	/** Reasoning effort per role, for models that support it. */
+	thinking: Record<ModelRole, "off" | "minimal" | "low" | "medium" | "high" | "xhigh">;
 	/** Pinged every 5 minutes while vigil runs (e.g. a healthchecks.io URL), so you hear when it dies. */
 	healthcheckUrl?: string;
 }
@@ -76,6 +78,7 @@ export function defaultConfig(): VigilConfig {
 		workers: { max: 2 },
 		approvals: { ttlMinutes: 30 },
 		search: { provider: process.env.BRAVE_API_KEY ? "brave" : "duckduckgo" },
+		thinking: { concierge: "low", worker: "high", triage: "low", dream: "medium" },
 	};
 }
 

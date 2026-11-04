@@ -68,7 +68,7 @@ function textOf(content: unknown): string {
 }
 
 /** Route every model call through one function that sees the role's system prompt. */
-export type Brain = (ctx: Ctx) => AssistantMessage;
+export type Brain = (ctx: Ctx) => AssistantMessage | Promise<AssistantMessage>;
 
 export interface Harness {
 	daemon: Daemon;

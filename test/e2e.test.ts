@@ -302,4 +302,25 @@ describe("vigil end to end", () => {
 		expect(h.channel.texts()).toEqual(["Nice receipt."]);
 		expect(h.calls[0].lastUser).toMatch(/photo saved at .*inbox/);
 	});
+
+	it("lets the owner interrupt a slow system run, then runs it again", async () => {
+		let systemRuns = 0;
+		let doneWith = "";
+		h = await harness(async (ctx) => {
+			if (ctx.lastUser.includes("[job slow]")) {
+				systemRuns++;
+				if (systemRuns === 1) await new Promise((r) => setTimeout(r, 400));
+				return say("OK");
+			}
+			return say("Here now.");
+		});
+		h.daemon.concierge.enqueue({ kind: "system", tag: "job slow", text: "think hard", done: (r) => (doneWith = r) });
+		await new Promise((r) => setTimeout(r, 60));
+		await h.channel.receive("ping");
+		await h.settle();
+		for (let i = 0; i < 40 && !doneWith; i++) await new Promise((r) => setTimeout(r, 25));
+		expect(h.channel.texts()).toEqual(["Here now."]);
+		expect(systemRuns).toBe(2);
+		expect(doneWith).toBe("OK");
+	});
 });
