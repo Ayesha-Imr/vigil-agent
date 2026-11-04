@@ -89,10 +89,11 @@ Then message your bot. `/help` lists the commands.
 
 ### Telegram in two minutes
 
-1. In Telegram, talk to **@BotFather** → `/newbot` → copy the token.
-2. Talk to **@userinfobot** to get your numeric user id.
-3. Put both into `vigil init`. Only that id can talk to vigil; everyone else is dropped before a
-   model ever sees the message.
+1. In Telegram, talk to **@BotFather** → `/newbot` → copy the token into `vigil init`.
+2. Start vigil. Its log prints a one-time code: `telegram has no owner yet … /pair 482913`.
+3. Send `/pair 482913` to your bot. You are now its owner. Everyone else is dropped before a model
+   ever sees their message, and the code is gone. (Or put your numeric user id from
+   **@userinfobot** into `vigil init` and skip pairing.)
 
 ### Discord
 

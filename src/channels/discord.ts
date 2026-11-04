@@ -52,7 +52,7 @@ export interface DiscordOptions {
 export class DiscordChannel implements Channel {
 	readonly id = ID;
 	private readonly token: string;
-	private readonly ownerUserId: string | undefined;
+	private ownerUserId: string | undefined;
 	private readonly log: Log;
 	private readonly client: Client;
 	private readonly dms = new Map<string, DMChannel>();
@@ -195,6 +195,10 @@ export class DiscordChannel implements Channel {
 		const channel = await this.client.channels.fetch(conversation);
 		if (!channel || !channel.isSendable()) throw new PermanentSendError(`discord channel ${conversation} is not a text channel`);
 		return channel;
+	}
+
+	setOwner(senderId: string): void {
+		this.ownerUserId = senderId;
 	}
 
 	ownerConversation(): string | undefined {

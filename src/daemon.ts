@@ -2,6 +2,7 @@
 // gate, and runs the loops (outbox, governor, scheduler, watchers, workers).
 
 import { execFile } from "node:child_process";
+import { randomInt } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -173,6 +174,7 @@ export class Daemon {
 				this.channels.delete(id);
 			}
 		}
+		this.offerPairing();
 		await this.reprocessStuckTriggers();
 		if (this.useTimers) {
 			const every = (ms: number, fn: () => unknown) => {
@@ -389,6 +391,10 @@ export class Daemon {
 		const s = this.s;
 		const done = (status: string, note: string) =>
 			s.db.run("UPDATE triggers SET status = ?, note = ?, processed_at = ? WHERE id = ?", status, note.slice(0, 300), s.clock.now(), triggerId);
+		if (msg.kind === "message" && this.tryPair(msg)) {
+			done("done", "paired");
+			return;
+		}
 		if (!isOwner(s.cfg, msg.channel, msg.senderId)) {
 			s.db.event("gate.dropped", `${msg.channel} message from non-owner ${msg.senderId} (${msg.senderName ?? "?"})`);
 			done("dropped", "not the owner");
@@ -456,6 +462,52 @@ export class Daemon {
 		// Stays 'processing' until the concierge has answered, so a crash in between replays it.
 		done("processing", "to concierge");
 		this.concierge.enqueue({ kind: "owner", channel: msg.channel, conversation: msg.conversation, externalId: msg.externalId, text: context + text, at: msg.at, triggerIds: [triggerId], attachments: msg.attachments });
+	}
+
+	/**
+	 * Pairing: a channel with no owner yet prints a one-time code to the server log at startup; the
+	 * first person who sends `/pair <code>` to the bot becomes its owner. Only someone who can read
+	 * the server's log can pair, so a stranger who finds the bot cannot.
+	 */
+	private tryPair(msg: InboundMessage): boolean {
+		const s = this.s;
+		const m = /^\/pair\s+(\d{6})\s*$/.exec(msg.text.trim());
+		if (!m) return false;
+		const code = s.db.getKv<string>(`pair:${msg.channel}`);
+		if (!code || (s.cfg.owner.identities[msg.channel]?.length ?? 0) > 0) return false;
+		if (m[1] !== code) {
+			s.db.event("pair.failed", `wrong pairing code on ${msg.channel} from ${msg.senderId}`);
+			// Five wrong guesses replace the code, so it cannot be brute-forced.
+			const fails = (s.db.getKv<number>(`pairfail:${msg.channel}`) ?? 0) + 1;
+			s.db.setKv(`pairfail:${msg.channel}`, fails >= 5 ? 0 : fails);
+			if (fails >= 5) {
+				s.db.setKv(`pair:${msg.channel}`, null);
+				this.offerPairing();
+			}
+			return true;
+		}
+		s.cfg.owner.identities[msg.channel] = [msg.senderId];
+		saveConfig(s.cfg, s.paths);
+		s.db.setKv(`pair:${msg.channel}`, null);
+		this.channels.get(msg.channel)?.setOwner?.(msg.senderId);
+		s.db.event("pair", `paired ${msg.channel} owner ${msg.senderId} (${msg.senderName ?? "?"})`);
+		s.outbox.enqueue({ channel: msg.channel, conversation: msg.conversation, text: `Paired. You're vigil's owner on ${msg.channel}. Say hi, or /help.`, ref: { kind: "reply", id: msg.externalId } });
+		void s.outbox.deliverDue();
+		return true;
+	}
+
+	/** Print a pairing code for every chat channel that has no owner yet. */
+	private offerPairing(): void {
+		for (const id of this.channels.keys()) {
+			if (id === "http" || id === "cli" || id === "ntfy") continue;
+			if ((this.s.cfg.owner.identities[id]?.length ?? 0) > 0) continue;
+			let code = this.s.db.getKv<string>(`pair:${id}`);
+			if (!code) {
+				code = String(randomInt(100000, 1000000));
+				this.s.db.setKv(`pair:${id}`, code);
+			}
+			this.log(`${id} has no owner yet. Send this to the bot from your own account to pair:  /pair ${code}`);
+		}
 	}
 
 	private refText(msg: InboundMessage): string {

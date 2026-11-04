@@ -62,6 +62,8 @@ export interface Channel {
 	download?(attachment: Attachment): Promise<{ data: Buffer; mimeType: string }>;
 	/** Show a short-lived "typing…" indicator, where the app has one. */
 	typing?(conversation: string): Promise<void>;
+	/** Learn the owner's identity at runtime (after /pair), so proactive messages can reach them. */
+	setOwner?(senderId: string): void;
 	/** The conversation to use for proactive messages to the owner, if known. */
 	ownerConversation(): string | undefined;
 	stop(): Promise<void>;

@@ -105,7 +105,7 @@ export function messageText(content: WAMessageContent | undefined): string | und
 export class WhatsAppChannel implements Channel {
 	readonly id = ID;
 	private readonly authDir: string;
-	private readonly owners: string[];
+	private owners: string[];
 	private readonly log: Log;
 	private readonly showQr: (qr: string) => void;
 	private readonly buttons = new ButtonMemory();
@@ -302,6 +302,11 @@ export class WhatsAppChannel implements Channel {
 		const at = ref.lastIndexOf(":");
 		if (at <= 0) return undefined;
 		return { key: { remoteJid: ref.slice(0, at), id: ref.slice(at + 1), fromMe: false }, message: { conversation: "" } };
+	}
+
+	setOwner(senderId: string): void {
+		const jid = normalizeJid(senderId);
+		if (!this.owners.includes(jid)) this.owners = [...this.owners, jid];
 	}
 
 	ownerConversation(): string | undefined {

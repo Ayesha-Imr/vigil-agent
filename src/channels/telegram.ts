@@ -30,7 +30,7 @@ export class TelegramChannel implements Channel {
 	readonly id = ID;
 	private readonly bot: Bot;
 	private readonly token: string;
-	private readonly ownerUserId: string | undefined;
+	private ownerUserId: string | undefined;
 	private readonly log: Log;
 	private polling: Promise<void> | undefined;
 
@@ -108,6 +108,10 @@ export class TelegramChannel implements Channel {
 		} catch (err) {
 			throw classifyTelegramError(err);
 		}
+	}
+
+	setOwner(senderId: string): void {
+		this.ownerUserId = senderId;
 	}
 
 	ownerConversation(): string | undefined {

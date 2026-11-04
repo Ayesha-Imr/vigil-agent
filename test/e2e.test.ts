@@ -343,4 +343,27 @@ describe("vigil end to end", () => {
 		const alerts = h.channel.texts().filter((t) => t.startsWith("I can't reach any model"));
 		expect(alerts.length).toBe(1);
 	});
+
+	it("pairs the owner with a one-time code from the server log", async () => {
+		h = await harness((ctx) => fauxAssistantMessage(ctx.lastUser.includes("hello") ? "Hi, owner." : "?"), (c) => {
+			c.owner.identities = {};
+		});
+		const code = h.daemon.s.db.getKv<string>("pair:telegram")!;
+		expect(code).toMatch(/^\d{6}$/);
+		await h.channel.receive("hello", { senderId: "777", conversation: "777" });
+		await h.channel.receive("/pair 000000", { senderId: "666", conversation: "666" });
+		await h.settle();
+		expect(h.channel.sent.length).toBe(0); // strangers get nothing, not even an error
+		await h.channel.receive(`/pair ${code}`, { senderId: "777", conversation: "777" });
+		await h.settle();
+		expect(h.channel.texts()[0]).toContain("Paired");
+		expect(h.daemon.s.cfg.owner.identities.telegram).toEqual(["777"]);
+		await h.channel.receive("hello", { senderId: "777", conversation: "777" });
+		await h.settle();
+		expect(h.channel.texts().at(-1)).toBe("Hi, owner.");
+		// Once paired, the code is gone and another person cannot pair.
+		await h.channel.receive(`/pair ${code}`, { senderId: "666", conversation: "666" });
+		await h.settle();
+		expect(h.daemon.s.cfg.owner.identities.telegram).toEqual(["777"]);
+	});
 });

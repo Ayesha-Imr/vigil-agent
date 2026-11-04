@@ -56,14 +56,14 @@ async function init(p: Paths): Promise<void> {
 	const tg = await ask(rl, "Telegram bot token (empty to skip)", cfg.channels.telegram?.token ?? "");
 	if (tg) {
 		cfg.channels.telegram = { token: tg };
-		console.log("Your Telegram user id: message @userinfobot, it answers with your id.");
-		const id = await ask(rl, "Your Telegram user id", cfg.owner.identities.telegram?.[0] ?? "");
+		console.log("Your Telegram user id (message @userinfobot), or leave empty to pair later: vigil start prints a /pair code to send to the bot.");
+		const id = await ask(rl, "Your Telegram user id (optional)", cfg.owner.identities.telegram?.[0] ?? "");
 		if (id) cfg.owner.identities.telegram = [id];
 	}
 	const dc = await ask(rl, "Discord bot token (empty to skip)", cfg.channels.discord?.token ?? "");
 	if (dc) {
 		cfg.channels.discord = { token: dc };
-		const id = await ask(rl, "Your Discord user id (Developer Mode → right-click yourself → Copy User ID)", cfg.owner.identities.discord?.[0] ?? "");
+		const id = await ask(rl, "Your Discord user id (optional; or pair later with /pair)", cfg.owner.identities.discord?.[0] ?? "");
 		if (id) cfg.owner.identities.discord = [id];
 	}
 	const wa = (await ask(rl, "Enable WhatsApp via Baileys? Unofficial; use a spare number (y/N)", cfg.channels.whatsapp?.enabled ? "y" : "n")).toLowerCase().startsWith("y");
