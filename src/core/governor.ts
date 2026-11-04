@@ -194,14 +194,31 @@ export interface TickResult {
 }
 
 /**
- * Whether a whole minute whose local time of day is `target` started in (from, to].
- * Walks at most a day of minutes; cheap because ticks are close together.
+ * Whether the owner's local clock passed time of day `target` in (from, to]. Walks the minutes
+ * between the instants (at most a day; ticks are close together) and looks at each step of the
+ * local clock: a normal step moves one minute, a spring-forward step jumps ahead (the skipped
+ * minutes count as passed, so a target inside the gap fires once), and a fall-back step jumps
+ * back (the repeated hour does not fire a second time).
  */
+/** Whether local minute `m` at UTC minute `k` already happened within the last three hours (fall-back). */
+function repeatedHour(k: number, m: number, tz: string): boolean {
+	for (let d = 15; d <= 180; d += 15) if (localMinuteOfDay((k - d) * MINUTE, tz) === m) return true;
+	return false;
+}
+
 export function crossed(from: number, to: number, target: number, tz: string): boolean {
 	const a = Math.floor(from / MINUTE);
 	const b = Math.floor(to / MINUTE);
-	for (let k = Math.max(a + 1, b - 1440); k <= b; k++) {
-		if (localMinuteOfDay(k * MINUTE, tz) === target) return true;
+	const startK = Math.max(a + 1, b - 1440);
+	let prev = localMinuteOfDay((startK - 1) * MINUTE, tz);
+	for (let k = startK; k <= b; k++) {
+		const cur = localMinuteOfDay(k * MINUTE, tz);
+		const step = (cur - prev + 1440) % 1440;
+		if (step > 0 && step <= 180) {
+			const offset = (target - prev + 1440) % 1440;
+			if (offset > 0 && offset <= step && !repeatedHour(k, cur, tz)) return true;
+		}
+		prev = cur;
 	}
 	return false;
 }
@@ -265,6 +282,22 @@ function flush(notices: Notice[], now: number): { notices: Notice[]; flushed: No
 export function takeForReply(state: GovernorState, now: number): { state: GovernorState; notices: Notice[] } {
 	const out = flush(state.notices, now);
 	return { state: { ...state, notices: out.notices }, notices: out.flushed };
+}
+
+/**
+ * Mark the given waiting notices as delivered in a reply, after that reply is safely stored.
+ * Notices that stopped waiting meanwhile (expired, muted) are left as they are.
+ */
+export function markDelivered(state: GovernorState, ids: readonly string[], now: number): { state: GovernorState; notices: Notice[] } {
+	const want = new Set(ids);
+	const done: Notice[] = [];
+	const notices = state.notices.map((n) => {
+		if (!want.has(n.id) || !isWaiting(n)) return n;
+		const d: Notice = { ...n, status: "digested", resolvedAt: now };
+		done.push(d);
+		return d;
+	});
+	return { state: { ...state, notices }, notices: done };
 }
 
 /** Peek at what waits, without changing anything. */

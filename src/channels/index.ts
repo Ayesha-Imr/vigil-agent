@@ -54,12 +54,14 @@ export function createChannels(cfg: VigilConfig, paths: Paths, opts: CreateChann
 	}
 
 	const http = ch.http;
-	const callback = http?.publicUrl && http.token ? { publicUrl: http.publicUrl, token: http.token } : undefined;
+	// ntfy topics can be read by anyone who knows the name, and a signed action URL works for whoever
+	// holds it, so buttons go to ntfy only when the owner allowed approvals over HTTP.
+	const callback = http?.publicUrl && http.token && http.allowApprovals ? { publicUrl: http.publicUrl, token: http.token } : undefined;
 
 	if (ch.ntfy) {
 		if (ch.ntfy.server && ch.ntfy.topic) {
 			out.set("ntfy", new NtfyChannel({ server: ch.ntfy.server, topic: ch.ntfy.topic, token: ch.ntfy.token, callback }));
-			if (!callback) log("channels: ntfy notifications will have no action buttons (needs channels.http.publicUrl and token)");
+			if (!callback) log("channels: ntfy notifications have no action buttons (needs channels.http.publicUrl, token and allowApprovals)");
 		} else log("channels: ntfy skipped: channels.ntfy needs server and topic");
 	}
 

@@ -68,7 +68,8 @@ export class Outbox {
 					item.conversation,
 					text,
 					last && item.buttons ? JSON.stringify(item.buttons) : null,
-					i === 0 ? (item.replyTo ?? null) : null,
+					// HTTP callers match every part of a reply by replyTo; chat apps quote only the first.
+					i === 0 || item.channel === "http" ? (item.replyTo ?? null) : null,
 					item.ref?.kind ?? null,
 					item.ref?.id ?? null,
 					orderKey,

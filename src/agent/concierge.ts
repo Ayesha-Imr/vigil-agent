@@ -143,7 +143,8 @@ export class Concierge {
 			this.origin = { channel: input.channel, conversation: input.conversation, externalId: input.externalId };
 			this.s.memory.journal("owner", input.text.replace(/^\[[^\]]+\]\s*/, ""));
 			let text = input.kind === "owner" && input.text.startsWith("[") ? input.text : this.tag(input);
-			const waiting = this.s.notifier.takeForReply();
+			// Peek only: the notices count as told once a reply mentioning them is stored (below).
+			const waiting = this.s.notifier.waiting();
 			if (waiting.length) {
 				text += `\n\n(While you were away, not yet told to the owner:\n${waiting.map((n) => `- [${n.effective}] ${n.text}`).join("\n")})`;
 			}
@@ -152,7 +153,10 @@ export class Concierge {
 			if (files.notes.length) text += `\n${files.notes.join("\n")}`;
 			const r = await promptWithFallback(this.s, session, "concierge", text, files.images).finally(() => clearInterval(typing));
 			const out = r.error && !r.text ? `Something went wrong on my side (${r.error.slice(0, 200)}). Try again in a bit.` : r.text;
-			if (out && !SILENT.test(out)) this.reply(input, out);
+			if (out && !SILENT.test(out)) {
+				this.reply(input, out);
+				if (!r.error) this.s.notifier.confirmDelivered(waiting.map((n) => n.id));
+			}
 			this.s.db.setKv(SESSION_KEY, session.sessionFile ?? null);
 			this.markDone(input.triggerIds);
 			return;

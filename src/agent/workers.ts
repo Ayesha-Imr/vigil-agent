@@ -13,6 +13,12 @@ import { workerTools } from "./tools.ts";
 import { webTools } from "./web.ts";
 
 const BUILTIN = ["read", "bash", "edit", "write", "grep", "find", "ls"];
+/**
+ * Work vigil inferred from untrusted content (a watcher change) gets read-only tools: an injected
+ * page must not be able to steer a worker into running commands or writing files. The owner can
+ * reply to the ticket to continue with full tools as explicit work.
+ */
+const READ_ONLY = ["read", "grep", "find", "ls"];
 
 export class WorkerPool {
 	private readonly s: Services;
@@ -64,8 +70,11 @@ export class WorkerPool {
 			cwd: t.dir,
 			persistence: { kind: "dir", dir: join(this.s.paths.sessions, "tickets", t.id), file: t.session_file },
 			prompt: fill(WORKER_PROMPT, { owner: this.s.cfg.owner.name, dir: t.dir, mandate, now: "{{now}}", tz: "{{tz}}", memory: "{{memory}}" }),
-			builtinTools: BUILTIN,
-			customTools: [...workerTools(this.s, t.id), ...webTools(() => this.s.cfg.search), delegateTool(this.s, t.id, t.dir)],
+			builtinTools: t.mandate.strength === "inferred" ? READ_ONLY : BUILTIN,
+			customTools:
+				t.mandate.strength === "inferred"
+					? [...workerTools(this.s, t.id), ...webTools(() => this.s.cfg.search)]
+					: [...workerTools(this.s, t.id), ...webTools(() => this.s.cfg.search), delegateTool(this.s, t.id, t.dir)],
 			requester: `ticket ${t.id} (${t.title})`,
 			skills: true,
 		});
@@ -89,7 +98,19 @@ export class WorkerPool {
 			const first = turn === 0 && !t.last_report && inputs.length === 0;
 			if (!first && inputs.length === 0) break;
 			const text = first ? "Start the work described in your mandate." : renderInputs(inputs);
-			const r = await promptWithFallback(this.s, session, "worker", text);
+			// A hung provider call must not hold a worker slot forever.
+			let timedOut = false;
+			const limit = (this.s.cfg.workers.turnTimeoutMinutes ?? 60) * 60_000;
+			const timer = setTimeout(() => {
+				timedOut = true;
+				void session.abort();
+			}, limit);
+			timer.unref?.();
+			const r = await promptWithFallback(this.s, session, "worker", text).finally(() => clearTimeout(timer));
+			if (timedOut) {
+				this.s.tickets.report(t.id, "failed", `A turn ran past ${Math.round(limit / 60_000)} minutes and was stopped. Reply to continue.`);
+				return;
+			}
 			if (session.sessionFile) this.s.tickets.setSessionFile(t.id, session.sessionFile);
 			if (r.error) {
 				this.s.tickets.report(t.id, "failed", `The model failed: ${r.error.slice(0, 300)}`);

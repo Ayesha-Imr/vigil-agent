@@ -53,7 +53,10 @@ export function homeRules(home: string): Rule[] {
 	return [
 		{
 			tool: "*",
-			match: String.raw`${h}/(config\.json|policy\.json|pi/|sessions/|whatsapp-auth/)|\.vigil/(config\.json|policy\.json|pi/|sessions/|whatsapp-auth/)`,
+			// Under vigil's home only work/, memory/, skills/ and inbox/ are for the agent; everything
+			// else (config, policy, credentials, the database, transcripts) is listed by exclusion, so
+			// globs such as pi/*.json or vigil.d? do not slip past a list of names.
+			match: String.raw`(${h}|\.vigil)/(?!(work|memory|skills|inbox)(/|\b))[^\s'"]`,
 			verdict: "forbidden",
 			reason: "touches vigil's own configuration, credentials or transcripts",
 		},

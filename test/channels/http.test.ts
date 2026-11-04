@@ -110,7 +110,8 @@ describe("POST /api/message", () => {
 		const { base } = await startChannel(async (msg, ch) => {
 			setTimeout(async () => {
 				await ch.send({ conversation: "http", text: "part one", replyTo: msg.externalId });
-				await ch.send({ conversation: "http", text: "part two", buttons: [[{ label: "OK", data: "ok" }]] });
+				// The outbox keeps replyTo on every part of an HTTP reply.
+				await ch.send({ conversation: "http", text: "part two", buttons: [[{ label: "OK", data: "ok" }]], replyTo: msg.externalId });
 			}, 10);
 		});
 		const body = (await (await post(`${base}/api/message`, { text: "long please" })).json()) as { reply: string; buttons: unknown };

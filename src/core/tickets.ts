@@ -170,7 +170,9 @@ export class Tickets {
 	}
 
 	/** The owner said stop. Only the owner's stop withdraws a mandate (dsh-superagent's rule). */
-	stop(id: string): boolean {
+	stop(ref: string): boolean {
+		const id = this.get(ref)?.id;
+		if (!id) return false;
 		const now = this.clock.now();
 		const r = this.db.run(
 			"UPDATE tickets SET status = 'ended', stage = 'stopped', stopped_by_owner = 1, ended_at = ?, updated_at = ? WHERE id = ? AND stopped_by_owner = 0",
@@ -183,9 +185,11 @@ export class Tickets {
 	}
 
 	/** Queue an input. An ended ticket that the owner did not stop reopens. */
-	addInput(id: string, kind: InputKind, text: string): boolean {
-		const t = this.get(id);
+	addInput(ref: string, kind: InputKind, text: string): boolean {
+		const t = this.get(ref);
 		if (!t || t.stopped_by_owner) return false;
+		// Callers may name a ticket by its short name; rows are keyed by the canonical id.
+		const id = t.id;
 		const now = this.clock.now();
 		this.db.tx(() => {
 			this.db.run("INSERT INTO ticket_inputs (ticket_id, kind, text, created_at) VALUES (?, ?, ?, ?)", id, kind, text, now);

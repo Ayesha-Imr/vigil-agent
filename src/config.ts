@@ -48,7 +48,8 @@ export interface VigilConfig {
 		/** Local time of the nightly memory consolidation, or null for none. */
 		dreamAt: string | null;
 	};
-	workers: { max: number };
+	/** `turnTimeoutMinutes` stops a worker turn that runs longer (default 60). */
+	workers: { max: number; turnTimeoutMinutes?: number };
 	approvals: { ttlMinutes: number };
 	/** Web search backend for the web_search tool. */
 	search: SearchConfig;

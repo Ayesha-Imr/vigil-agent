@@ -26,7 +26,7 @@ describe("createChannels", () => {
 		expect([...chans.keys()].sort()).toEqual(["ntfy", "telegram"]);
 		expect(lines.some((l) => l.includes("discord skipped: no token"))).toBe(true);
 		expect(lines.some((l) => l.includes("http skipped: no token"))).toBe(true);
-		expect(lines.some((l) => l.includes("ntfy notifications will have no action buttons"))).toBe(true);
+		expect(lines.some((l) => l.includes("ntfy notifications have no action buttons"))).toBe(true);
 	});
 
 	it("creates WhatsApp only when enabled, and the CLI on request", () => {

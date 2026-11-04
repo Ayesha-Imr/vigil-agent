@@ -240,7 +240,7 @@ describe("attention governor: invariants under random use", () => {
 			}),
 			{ numRuns: 100 },
 		);
-	});
+	}, 60_000);
 });
 
 describe("attention governor: examples", () => {

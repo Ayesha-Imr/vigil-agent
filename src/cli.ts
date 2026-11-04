@@ -200,7 +200,7 @@ async function start(p: Paths, opts: { cli: boolean }): Promise<Daemon> {
 	await daemon.s.models.refresh();
 	await daemon.start();
 	const http = cfg.channels.http;
-	if (!opts.cli && http?.token) console.log(`[vigil] panel: http://127.0.0.1:${http.port}/panel?token=${http.token}`);
+	if (!opts.cli && http?.token) console.log(`[vigil] panel: http://127.0.0.1:${http.port}/panel (token: channels.http.token in ${p.config})`);
 	let stopping = false;
 	const shutdown = async () => {
 		if (stopping) return;

@@ -164,6 +164,22 @@ const MIGRATIONS: string[] = [
 
 export type Row = Record<string, SQLInputValue>;
 
+const SECRET_PATTERNS = [
+	/\b(sk|pk|rk)-[A-Za-z0-9_-]{16,}/g, // OpenAI-style keys
+	/\bgh[pousr]_[A-Za-z0-9]{20,}/g, // GitHub tokens
+	/\bxox[abprs]-[A-Za-z0-9-]{10,}/g, // Slack tokens
+	/\b\d{6,}:[A-Za-z0-9_-]{30,}/g, // Telegram bot tokens
+	/\b(bearer|token|api[_-]?key|password|secret)(\s*[:=]\s*|\s+)["']?[A-Za-z0-9._~+/=-]{12,}/gi,
+	/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, // JWTs
+];
+
+/** Mask strings that look like credentials before they are logged or shown. */
+export function scrubSecrets(text: string): string {
+	let out = text;
+	for (const re of SECRET_PATTERNS) out = out.replace(re, (m) => `${m.slice(0, 4)}…[redacted]`);
+	return out;
+}
+
 export class Db {
 	readonly raw: DatabaseSync;
 
@@ -240,13 +256,13 @@ export class Db {
 		);
 	}
 
-	/** Append to the audit log the panel and `vigil status` show. */
+	/** Append to the audit log the panel and `vigil status` show. Token-looking strings are masked. */
 	event(kind: string, text: string, data?: unknown, now = Date.now()): void {
 		this.run(
 			"INSERT INTO events (at, kind, text, data) VALUES (?, ?, ?, ?)",
 			now,
 			kind,
-			text,
+			scrubSecrets(text),
 			data === undefined ? null : JSON.stringify(data),
 		);
 	}

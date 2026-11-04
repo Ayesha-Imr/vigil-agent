@@ -10,6 +10,7 @@ import {
 	type GovernorPolicy,
 	type GovernorState,
 	initialState,
+	markDelivered,
 	mute,
 	type Notice,
 	type NoticeInput,
@@ -98,6 +99,17 @@ export class Notifier {
 			this.commit(r.state);
 			for (const n of r.notices) this.record(n);
 			return r.notices;
+		});
+	}
+
+	/** Confirm that a stored reply told the owner about these waiting notices. */
+	confirmDelivered(ids: readonly string[]): void {
+		if (!ids.length) return;
+		const now = this.clock.now();
+		this.db.tx(() => {
+			const r = markDelivered(this.state, ids, now);
+			this.commit(r.state);
+			for (const n of r.notices) this.record(n);
 		});
 	}
 

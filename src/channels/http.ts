@@ -333,7 +333,9 @@ export class HttpChannel implements Channel {
 	 */
 	async send(msg: OutboundMessage): Promise<SendResult> {
 		const externalId = `http:out:${randomUUID()}`;
-		const key = msg.replyTo && this.waiters.has(msg.replyTo) ? msg.replyTo : !msg.replyTo ? this.lastAnswered : undefined;
+		// Only an exact replyTo match joins a waiting request: a message without one belongs to nobody,
+		// so concurrent requests can never receive each other's replies.
+		const key = msg.replyTo && this.waiters.has(msg.replyTo) ? msg.replyTo : undefined;
 		const w = key ? this.waiters.get(key) : undefined;
 		if (key && w && msg.conversation === HTTP_CONVERSATION) {
 			w.parts.push(msg.text);

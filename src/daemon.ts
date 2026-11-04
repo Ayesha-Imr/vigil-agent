@@ -403,7 +403,7 @@ export class Daemon {
 
 		if (msg.kind === "button") {
 			const [kind] = (msg.data ?? "").split(":");
-			if (msg.channel === "http" && (kind === "approve" || kind === "deny") && !s.cfg.channels.http?.allowApprovals) {
+			if (msg.channel === "http" && (kind === "approve" || kind === "deny" || kind === "answer") && !s.cfg.channels.http?.allowApprovals) {
 				// Any process on this machine that finds the HTTP token could press this button, including
 				// the agent's own tools. Approvals come from a chat app where the owner's identity is
 				// checked, unless the owner opted in (for example with tools sandboxed away from the token).
@@ -645,7 +645,16 @@ export class Daemon {
 			"SELECT id, payload FROM triggers WHERE status IN ('received', 'processing') AND source NOT IN ('clock', 'watch') AND created_at > ? ORDER BY id",
 			this.s.clock.now() - DAY,
 		);
-		for (const r of rows) await this.route(JSON.parse(r.payload) as InboundMessage, r.id);
+		for (const r of rows) {
+			const msg = JSON.parse(r.payload) as InboundMessage;
+			// Answered before the crash, but not yet marked: do not answer twice.
+			const answered = this.s.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM outbox WHERE ref_kind = 'reply' AND ref_id = ?", msg.externalId);
+			if ((answered?.n ?? 0) > 0) {
+				this.s.db.run("UPDATE triggers SET status = 'done', note = 'answered before restart' WHERE id = ?", r.id);
+				continue;
+			}
+			await this.route(msg, r.id);
+		}
 	}
 
 	async stop(): Promise<void> {
