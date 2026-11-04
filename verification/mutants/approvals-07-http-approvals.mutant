@@ -1,0 +1,11 @@
+spec: approvals
+run: MCApprovals.tla
+config: Approvals.cfg
+check: OwnerOnly
+kind: invariant
+code: src/daemon.ts route(): the refusal of approve/deny on the "http" channel unless channels.http.allowApprovals is gone (commit 81f48ef reverted): anything holding the HTTP token, the agent's own tools included, can approve
+@@@ old
+           passesHttp  == p # "http" \/ AllowHttpApprovals      \* refused over HTTP unless allowed
+@@@ new
+           passesHttp  == TRUE      \* refused over HTTP unless allowed
+@@@ end

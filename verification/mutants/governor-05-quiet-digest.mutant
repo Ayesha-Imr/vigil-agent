@@ -1,0 +1,11 @@
+spec: governor
+run: MCGovernor.tla
+config: Governor.cfg
+check: Quiet
+kind: invariant
+code: src/core/governor.ts tick(): `const digestDue = !quiet && ...` loses `!quiet` (a digest time inside quiet hours sends the digest at night)
+@@@ old
+        digestDue == ~quiet /\ \E d \in pol.digest : Crossed(lastTickAt, now, d)
+@@@ new
+        digestDue == \E d \in pol.digest : Crossed(lastTickAt, now, d)
+@@@ end

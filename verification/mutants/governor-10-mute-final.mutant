@@ -1,0 +1,11 @@
+spec: governor
+run: MCGovernor.tla
+config: Governor.cfg
+check: FinalStable
+kind: property
+code: src/core/governor.ts mute(): the `isWaiting(n) &&` test is gone, so muting rewrites delivered and digested notices to dropped
+@@@ old
+    /\ st' = [m \in Notices |-> IF IsWaiting(m) /\ nt[m].topic = tp THEN "dropped" ELSE st[m]]
+@@@ new
+    /\ st' = [m \in Notices |-> IF kept[m] /\ nt[m].topic = tp THEN "dropped" ELSE st[m]]
+@@@ end

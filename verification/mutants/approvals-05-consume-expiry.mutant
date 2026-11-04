@@ -1,0 +1,11 @@
+spec: approvals
+run: MCApprovals.tla
+config: Approvals.cfg
+check: ExpiredNeverRuns
+kind: invariant
+code: src/core/approvals.ts consume(): `AND expires_at > ?` is gone, so an approval used after its expiry (before expire() swept it) still runs the call
+@@@ old
+                        /\ ap[a].expiresAt > now          \*   AND expires_at > now
+@@@ new
+                        /\ TRUE          \*   AND expires_at > now
+@@@ end

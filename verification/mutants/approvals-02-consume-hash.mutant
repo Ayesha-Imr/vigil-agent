@@ -1,0 +1,11 @@
+spec: approvals
+run: MCApprovals.tla
+config: Approvals.cfg
+check: NoUnapprovedExecution
+kind: invariant
+code: src/core/approvals.ts consume(): `AND hash = ?` is gone, so an approval for one call lets a different call run
+@@@ old
+                        /\ ap[a].hash = hashOf[c]         \*   AND hash = ?
+@@@ new
+                        /\ TRUE         \*   AND hash = ?
+@@@ end

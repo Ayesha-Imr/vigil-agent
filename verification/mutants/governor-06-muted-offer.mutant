@@ -1,0 +1,11 @@
+spec: governor
+run: MCGovernor.tla
+config: Governor.cfg
+check: NoMuted
+kind: invariant
+code: src/core/governor.ts offer() step 1 is removed: `if (mutedUntil !== undefined && mutedUntil > now) return finish(..., "drop:muted")`
+@@@ old
+           IF muted THEN "muted"                             \* 1.
+@@@ new
+           IF FALSE THEN "muted"                             \* 1.
+@@@ end

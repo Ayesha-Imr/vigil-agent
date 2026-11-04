@@ -1,0 +1,11 @@
+spec: approvals
+run: MCApprovals.tla
+config: Approvals.cfg
+check: SingleUse
+kind: invariant
+code: src/core/approvals.ts consume(): `SET status = 'consumed'` becomes a no-op (status stays 'approved'), so one approval runs two identical calls
+@@@ old
+              IN /\ ap' = IF ok THEN [ap EXCEPT ![a].status = "consumed"] ELSE ap
+@@@ new
+              IN /\ ap' = ap
+@@@ end

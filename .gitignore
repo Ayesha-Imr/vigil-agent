@@ -6,3 +6,7 @@ verification/**/states/
 verification/**/*_TTrace_*
 .env
 data/
+verification/out/
+verification/.tools/
+verification/**/out/
+*.bin

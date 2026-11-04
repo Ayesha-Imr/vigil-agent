@@ -1,0 +1,13 @@
+spec: approvals
+run: MCApprovals.tla
+config: Approvals.cfg
+check: NoUnapprovedExecution
+kind: invariant
+code: src/agent/gate.ts: `if (outcome === "approved" && h.approvals.consume(...))` becomes `if (outcome === "approved")`: the gate runs the call without consuming
+@@@ old
+                 /\ pc' = [pc EXCEPT ![c] = IF ok THEN "running" ELSE "refused"]
+                 /\ execs' = IF ok THEN execs \cup {[c |-> c, a |-> a, at |-> now, consumed |-> TRUE]} ELSE execs
+@@@ new
+                 /\ pc' = [pc EXCEPT ![c] = "running"]
+                 /\ execs' = execs \cup {[c |-> c, a |-> a, at |-> now, consumed |-> ok]}
+@@@ end

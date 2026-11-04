@@ -1,0 +1,11 @@
+spec: governor
+run: MCGovernor.tla
+config: Governor.cfg
+check: Quiet
+kind: invariant
+code: src/core/governor.ts offer() step 5 is removed: `if (isQuiet(now, policy)) return finish(effective, "held", "hold")`
+@@@ old
+           ELSE IF IsQuiet(now) THEN "quiet"                 \* 5.
+@@@ new
+           ELSE IF FALSE THEN "quiet"                 \* 5.
+@@@ end

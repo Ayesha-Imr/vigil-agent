@@ -1,0 +1,18 @@
+spec: approvals
+run: MCApprovals.tla
+config: Approvals_live.cfg
+check: GateResolves
+kind: property
+code: src/core/approvals.ts wait() loses its setTimeout AND src/daemon.ts tickGovernorAndClock loses s.approvals.expire(): a request nobody answers then holds the tool call forever. (Either one alone still wakes the gate.)
+@@@ old
+    /\ now >= ap[myAp[c]].expiresAt
+@@@ new
+    /\ FALSE
+@@@ end
+@@@ old
+    /\ ExpiredNow # {}
+    /\ ExpireStep({}, outcome)
+@@@ new
+    /\ FALSE
+    /\ ExpireStep({}, outcome)
+@@@ end

@@ -1,0 +1,11 @@
+spec: governor
+run: MCGovernor.tla
+config: Governor.cfg
+check: Budget
+kind: invariant
+code: src/core/governor.ts offer() step 6: `if (withinBudget && spaced)` becomes `if (withinBudget)` (the minGapMinutes spacing check is gone)
+@@@ old
+           ELSE IF withinBudget /\ spaced THEN "interrupt"   \* 6.
+@@@ new
+           ELSE IF withinBudget THEN "interrupt"   \* 6.
+@@@ end

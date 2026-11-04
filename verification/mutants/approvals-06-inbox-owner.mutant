@@ -1,0 +1,11 @@
+spec: approvals
+run: MCApprovals.tla
+config: Approvals.cfg
+check: OwnerOnly
+kind: invariant
+code: src/daemon.ts route(): the `if (!isOwner(s.cfg, msg.channel, msg.senderId))` drop is gone, so a stranger's button press reaches decide()
+@@@ old
+    /\ LET passesInbox == p # "stranger"                        \* isOwner(cfg, channel, senderId)
+@@@ new
+    /\ LET passesInbox == TRUE                        \* isOwner(cfg, channel, senderId)
+@@@ end

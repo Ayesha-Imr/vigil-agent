@@ -1,0 +1,11 @@
+spec: approvals
+run: MCApprovals.tla
+config: Approvals.cfg
+check: DeniedNeverRuns
+kind: invariant
+code: src/core/approvals.ts decide(): `AND status = 'pending'` is gone, so an Approve tap after Deny flips the decision
+@@@ old
+                      /\ ap[a].status = "pending"
+@@@ new
+                      /\ ap[a].status \in {"pending", "denied"}
+@@@ end

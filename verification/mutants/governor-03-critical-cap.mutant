@@ -1,0 +1,11 @@
+spec: governor
+run: MCGovernor.tla
+config: Governor.cfg
+check: CriticalCap
+kind: invariant
+code: src/core/governor.ts offer() step 3: the `within24h(state.criticals, now) < policy.criticalPerDay` test is gone, every critical is delivered
+@@@ old
+           ELSE IF e0 = "critical" /\ critOk THEN "critical" \* 3.
+@@@ new
+           ELSE IF e0 = "critical" THEN "critical" \* 3.
+@@@ end

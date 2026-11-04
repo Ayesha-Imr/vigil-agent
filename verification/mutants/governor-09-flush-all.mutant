@@ -1,0 +1,11 @@
+spec: governor
+run: MCGovernor.tla
+config: Governor.cfg
+check: Conservation
+kind: invariant
+code: src/core/governor.ts flush(): `if (!isWaiting(n)) return n;` is gone, so a digest re-sends notices that were already delivered
+@@@ old
+        flushed == IF digestDue \/ quietEnded THEN {m \in Notices : st1[m] \in Waiting} ELSE {}
+@@@ new
+        flushed == IF digestDue \/ quietEnded THEN {m \in Notices : st1[m] # "none"} ELSE {}
+@@@ end

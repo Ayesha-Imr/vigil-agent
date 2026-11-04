@@ -1,0 +1,11 @@
+spec: governor
+run: MCGovernor.tla
+config: Governor.cfg
+check: NoDuplicate
+kind: invariant
+code: src/core/governor.ts offer() step 2 is removed: `if (dup) return finish(..., "drop:duplicate")`
+@@@ old
+           ELSE IF dup THEN "duplicate"                      \* 2.
+@@@ new
+           ELSE IF FALSE THEN "duplicate"                      \* 2.
+@@@ end

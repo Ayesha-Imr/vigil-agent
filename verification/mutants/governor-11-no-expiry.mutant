@@ -1,0 +1,11 @@
+spec: governor
+run: MCGovernor.tla
+config: Governor_live.cfg
+check: EventuallyResolved
+kind: property
+code: src/core/governor.ts tick(): the expiry pass (`isWaiting(n) && n.expiresAt <= now`) is gone; with digestTimes [] and no quiet hours a queued notice then waits forever
+@@@ old
+    LET expired == {m \in Notices : st[m] \in Waiting /\ nt[m].expiresAt <= now}
+@@@ new
+    LET expired == {}
+@@@ end
