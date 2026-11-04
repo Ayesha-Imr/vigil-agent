@@ -42,7 +42,8 @@ export class Concierge {
 		const file = this.s.db.getKv<string>(SESSION_KEY);
 		const { session } = await buildSession(this.s, {
 			role: "concierge",
-			cwd: this.s.paths.home,
+			// Its own folder, not vigil's home: relative paths must not land on config or credentials.
+			cwd: join(this.s.paths.home, "concierge"),
 			persistence: { kind: "dir", dir: join(this.s.paths.sessions, "concierge"), file },
 			prompt: fill(CONCIERGE_PROMPT, {
 				owner: this.s.cfg.owner.name,

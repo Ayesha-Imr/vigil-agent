@@ -2,7 +2,7 @@
 // why vigil may do it), where it came from, its stage, and a queue of inputs for its worker.
 
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { ChannelId } from "../config.ts";
 import type { Db } from "../store/db.ts";
@@ -72,6 +72,15 @@ export interface TicketInput {
 	created_at: number;
 }
 
+function lstatExists(p: string): boolean {
+	try {
+		lstatSync(p);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 function slug(s: string): string {
 	return (
 		s
@@ -107,7 +116,11 @@ export class Tickets {
 		const id = `tk_${randomUUID().slice(0, 6)}`;
 		const short = `${slug(input.shortName ?? input.title)}-${id.slice(3)}`;
 		const dir = join(this.workRoot, short);
-		mkdirSync(dir, { recursive: true });
+		mkdirSync(this.workRoot, { recursive: true });
+		// Create the folder fresh: a symlink planted under work/ must not become a ticket's folder
+		// (the sandbox would bind its target writable).
+		if (existsSync(dir) || lstatExists(dir)) throw new Error(`ticket folder ${dir} already exists`);
+		mkdirSync(dir);
 		this.db.run(
 			`INSERT INTO tickets (id, short_name, title, mandate, origin, status, stage, dir, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, ?, 'open', 'queued', ?, ?, ?)`,

@@ -342,7 +342,12 @@ export class Daemon {
 					if (existing) return finish(`ticket ${existing.id} (already opened for this slot)`);
 					const t = s.tickets.create({
 						title: job.name,
-						mandate: { request: job.prompt, scope: "The scheduled task as written by the owner.", strength: "explicit", rule },
+						mandate: {
+							request: job.prompt,
+							scope: job.created_by === "owner" ? "The scheduled task as written by the owner." : "A task vigil scheduled itself; investigate and report only.",
+							strength: job.created_by === "owner" ? "explicit" : "inferred",
+							rule,
+						},
 						origin: { channel: "system", conversation: "" },
 					});
 					this.workers.pump();

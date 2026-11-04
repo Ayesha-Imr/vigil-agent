@@ -89,11 +89,18 @@ export class WorkerPool {
 			role: "worker",
 			cwd: t.dir,
 			persistence: { kind: "dir", dir: join(this.s.paths.sessions, "tickets", t.id), file: t.session_file },
-			prompt: fill(WORKER_PROMPT, { owner: this.s.cfg.owner.name, dir: t.dir, mandate, now: "{{now}}", tz: "{{tz}}", memory: "{{memory}}" }),
+			prompt: fill(WORKER_PROMPT, {
+				owner: this.s.cfg.owner.name,
+				dir: t.dir,
+				mandate,
+				now: "{{now}}",
+				tz: "{{tz}}",
+				memory: t.mandate.strength === "inferred" ? "(No memory: this work started from untrusted content.)" : "{{memory}}",
+			}),
 			builtinTools: t.mandate.strength === "inferred" ? READ_ONLY : BUILTIN,
 			customTools:
 				t.mandate.strength === "inferred"
-					? [...workerTools(this.s, t.id), ...webTools(() => this.s.cfg.search)]
+					? [...workerTools(this.s, t.id, { inferred: true }), ...webTools(() => this.s.cfg.search)]
 					: [...workerTools(this.s, t.id), ...webTools(() => this.s.cfg.search), delegateTool(this.s, t.id, t.dir)],
 			requester: `ticket ${t.id} (${t.title})`,
 			ticketId: t.id,

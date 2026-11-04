@@ -1,7 +1,7 @@
 // The approval gate: a pi extension that classifies every tool call by data-driven rules and
 // holds risky calls until the owner approves that exact call. Forbidden calls never run.
 
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, resolve } from "node:path";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
@@ -24,6 +24,8 @@ export interface GatePolicy {
 	rules: Rule[];
 	/** Directories write/edit may touch without approval. */
 	writableRoots: string[];
+	/** vigil's home (resolved): file tools may reach only its agent directories. */
+	home?: string;
 }
 
 /**
@@ -50,6 +52,12 @@ export const DEFAULT_RULES: Rule[] = [
 	{ tool: "bash", match: String.raw`\b(npm|pnpm|yarn)\s+publish\b|\bgh\s+(repo\s+(delete|create)|release\s+create|pr\s+merge|secret)\b|\bdocker\s+push\b`, verdict: "risky", reason: "publishes or changes something outside" },
 	{ tool: "bash", match: String.raw`\bcrontab\s+-r\b|>\s*/etc/|\bchmod\s+-R\s+777\b`, verdict: "risky", reason: "changes system configuration" },
 	{ tool: "bash", match: String.raw`\b(sendmail|mail|mutt)\b.*@|\bssh\s+\S+@`, verdict: "risky", reason: "contacts another host or person" },
+	{ tool: "*", match: String.raw`/proc/[^/\s]+/environ|\.local/share/signal-cli`, verdict: "forbidden", reason: "touches credentials" },
+	{ tool: "bash", match: String.raw`\bgit\b[^|;&]*\s-c\s*alias\.|\bgit\b[^|;&]*\s-C\S*\s*\S*\s+(push|reset|clean)\b|\bpu['"]{2}sh\b`, verdict: "risky", reason: "pushes or discards git work" },
+	{ tool: "bash", match: String.raw`\|\s*(sudo\s+)?(python3?|perl|ruby|node|php)\b`, verdict: "risky", reason: "pipes into an interpreter" },
+	{ tool: "bash", match: String.raw`\bfind\b[^|;&]*\s-(delete|exec\s+rm)\b|shutil\.rmtree|os\.remove|fs\.rmSync|unlinkSync`, verdict: "risky", reason: "deletes files" },
+	{ tool: "bash", match: String.raw`>\s*~?/?(home/[^/\s]+/)?\.(bashrc|zshrc|profile|bash_profile|ssh)\b|>\s*\$HOME/\.`, verdict: "risky", reason: "changes shell or login configuration" },
+	{ tool: "bash", match: String.raw`(127\.0\.0\.1|localhost):8080|/api/v1/rpc`, verdict: "risky", reason: "talks to a local service (such as signal-cli)" },
 	{ tool: "add_watcher", match: String.raw`"kind"\s*:\s*"command"`, verdict: "risky", reason: "runs a shell command on a schedule" },
 ];
 
@@ -75,13 +83,17 @@ export function homeRules(home: string): Rule[] {
 			// Best effort against `cd ~/.vigil && cat config.json`. A regex cannot follow every shell
 			// trick; the real boundary is that approvals do not come from the HTTP API by default.
 			tool: "bash",
-			match: String.raw`(\.vigil|${h})[\s\S]*\b(config\.json|policy\.json|auth\.json|sessions|whatsapp-auth)\b`,
+			match: String.raw`(\.vigil|${h}|\.vi[*?\[])[\s\S]*\b(config|policy|auth|sessions|whatsapp-auth|vigil\.d)`,
 			verdict: "forbidden",
 			reason: "touches vigil's own configuration, credentials or transcripts",
 		},
 	];
 }
 
+const FILE_TOOLS = new Set(["read", "write", "edit", "grep", "find", "ls"]);
+/** The parts of vigil's home the agent may use. */
+const AGENT_DIRS = new Set(["work", "memory", "skills", "inbox", "concierge"]);
+const CREDENTIAL_PATH = /\/(\.ssh|\.gnupg|\.aws|\.azure|\.kube|\.docker|\.pi)(\/|$)|\/\.config\/(gh|gcloud)(\/|$)|\/(\.netrc|\.git-credentials|\.npmrc|\.pypirc|auth\.json|mcp-auth\.json)$|\/\.local\/share\/signal-cli(\/|$)|^\/proc\/[^/]+\/environ$/;
 const BUILTIN_TOOLS = new Set(["read", "bash", "edit", "write", "grep", "find", "ls", "codemode", "tool_search"]);
 const VIGIL_TOOLS = /^(notify|remember|recall|forget|spawn_ticket|ticket_\w+|schedule_job|list_jobs|cancel_job|add_watcher|list_watchers|remove_watcher|mute_topic|unmute_topic|report|ask_owner|triage_decide)$/;
 /** MCP and other external tools whose names suggest a side effect outside vigil. */
@@ -97,7 +109,11 @@ export function loadGatePolicy(path: string, writableRoots: string[], home?: str
 	}
 	for (const r of rules) new RegExp(r.match, r.flags ?? "i"); // Fail at startup, not mid-call, on a bad pattern.
 	// Owner rules cannot loosen the protection of vigil's own state: those rules come first.
-	return { rules: [...(home ? homeRules(home) : []), ...rules, ...DEFAULT_RULES], writableRoots: writableRoots.map((r) => realOrSelf(resolve(r))) };
+	return {
+		rules: [...(home ? homeRules(home) : []), ...rules, ...DEFAULT_RULES],
+		writableRoots: writableRoots.map((r) => realOrSelf(resolve(r))),
+		home: home ? realOrSelf(resolve(home)) : undefined,
+	};
 }
 
 /** Resolve a tool path the way pi's write and edit tools do: `~` expands, a leading `@` is dropped. */
@@ -109,9 +125,21 @@ export function resolveLikePi(p: string, cwd: string): string {
 	return resolve(cwd, path);
 }
 
-/** Follow symlinks for the deepest part of the path that exists, so a link cannot leave a root. */
-function realOrSelf(abs: string): string {
+/**
+ * Where a path really leads: symlinks are followed, including dangling ones (a write through a
+ * link to a missing file would create the target), and the rest is resolved under the deepest
+ * existing directory. So a link cannot carry a call out of, or into, a protected place.
+ */
+export function realOrSelf(abs: string): string {
 	let cur = abs;
+	for (let hops = 0; hops < 40; hops++) {
+		try {
+			if (!lstatSync(cur).isSymbolicLink()) break;
+			cur = resolve(dirname(cur), readlinkSync(cur));
+		} catch {
+			break;
+		}
+	}
 	const rest: string[] = [];
 	for (let i = 0; i < 64; i++) {
 		try {
@@ -145,6 +173,21 @@ export function classify(policy: GatePolicy, tool: string, input: Record<string,
 	const bare = tool.replace(/^.*(__|\.|\/)/, "");
 	if (!BUILTIN_TOOLS.has(tool) && !VIGIL_TOOLS.test(tool) && !READ_ONLY.test(bare) && SIDE_EFFECT.test(bare)) {
 		return { verdict: "risky", reason: `external tool ${tool} may change something outside vigil` };
+	}
+	// File tools: resolve the path the way pi will (cwd, ~, @) and follow symlinks, then protect by
+	// location rather than by spelling: "config.json" from the concierge, "../../config.json" from a
+	// worker, or a symlink planted by a shell command all land on the same real path.
+	if (FILE_TOOLS.has(tool)) {
+		const raw = typeof input.path === "string" ? input.path : typeof input.file_path === "string" ? input.file_path : ".";
+		const real = realOrSelf(resolveLikePi(raw, cwd));
+		if (policy.home && (real === policy.home || real.startsWith(`${policy.home}/`))) {
+			const rel = real.slice(policy.home.length + 1);
+			const top = rel.split("/")[0];
+			if (!AGENT_DIRS.has(top) && !(rel === "" && (tool === "ls" || tool === "find"))) {
+				return { verdict: "forbidden", reason: "touches vigil's own configuration, credentials or transcripts" };
+			}
+		}
+		if (CREDENTIAL_PATH.test(real)) return { verdict: "forbidden", reason: "touches credentials" };
 	}
 	if (tool === "write" || tool === "edit") {
 		const p = typeof input.path === "string" ? input.path : typeof input.file_path === "string" ? input.file_path : "";

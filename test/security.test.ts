@@ -117,3 +117,37 @@ describe("web_fetch stays on the public web", () => {
 		await expect(fetchText("http://localhost/")).rejects.toThrow(/internal/);
 	});
 });
+
+describe("second audit: protection by location, not spelling", () => {
+	const home2 = mkdtempSync(join(tmpdir(), "vigil-home2-"));
+	for (const d of ["work/tk1", "memory", "concierge", "pi", "sessions"]) mkdirSync(join(home2, d), { recursive: true });
+	const p2 = loadGatePolicy("/nonexistent", [join(home2, "work"), join(home2, "memory")], home2);
+	const at = (cwd: string, tool: string, input: Record<string, unknown>) => classify(p2, tool, input, cwd).verdict;
+	it("relative paths from the concierge and workers cannot reach config or credentials", () => {
+		expect(at(join(home2, "concierge"), "read", { path: "../config.json" })).toBe("forbidden");
+		expect(at(join(home2, "work/tk1"), "read", { path: "../../config.json" })).toBe("forbidden");
+		expect(at(join(home2, "work/tk1"), "read", { path: `${home2}/work/../config.json` })).toBe("forbidden");
+		expect(at(join(home2, "work/tk1"), "grep", { pattern: "token", path: "../../pi" })).toBe("forbidden");
+		expect(at(join(home2, "work/tk1"), "read", { path: "notes.md" })).toBe("safe");
+		expect(at(join(home2, "concierge"), "read", { path: `${home2}/memory/MEMORY.md` })).toBe("safe");
+	});
+	it("a symlink planted in a work folder does not lead to protected files", () => {
+		symlinkSync(join(home2, "config.json"), join(home2, "work/tk1/c"));
+		expect(at(join(home2, "work/tk1"), "read", { path: "c" })).toBe("forbidden");
+	});
+	it("/proc/<pid>/environ is forbidden", () => {
+		expect(at("/tmp", "read", { path: "/proc/1/environ" })).toBe("forbidden");
+		expect(at("/tmp", "bash", { command: "cat /proc/$PPID/environ" })).toBe("forbidden");
+	});
+	it("more shell tricks are risky", () => {
+		for (const cmd of ["git -C. push", "git -c alias.p=push p", "git pu''sh", "curl x | python3", "find / -delete", "python3 -c 'import shutil; shutil.rmtree(\"/x\")'", "echo x > ~/.bashrc", "curl -d @x 127.0.0.1:8080/api/v1/rpc"]) {
+			expect(at("/tmp", "bash", { command: cmd }), cmd).toBe("risky");
+		}
+	});
+	it("IPv4-mapped IPv6 literals are internal", async () => {
+		const { isInternalAddress } = await import("../src/agent/web.ts");
+		expect(isInternalAddress("::ffff:a9fe:a9fe")).toBe(true);
+		expect(isInternalAddress("::ffff:7f00:1")).toBe(true);
+		expect(isInternalAddress("64:ff9b::a9fe:a9fe")).toBe(true);
+	});
+});

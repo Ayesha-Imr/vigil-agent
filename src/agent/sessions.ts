@@ -153,7 +153,9 @@ export async function buildSession(s: Services, spec: SessionSpec): Promise<Buil
 			createBashToolDefinition(spec.cwd, {
 				spawnHook: sandboxHook({
 					home: s.paths.home,
-					writable: [s.paths.work, "/tmp"],
+					// Workers write only their own ticket folder (added by the hook) and /tmp, so one
+					// ticket cannot plant links in another's; the concierge may also use work/.
+					writable: spec.role === "concierge" ? [s.paths.work, "/tmp"] : ["/tmp"],
 					readable: [s.paths.memory, s.paths.skills, join(s.paths.home, "inbox"), s.skillsDir],
 				}),
 			}) as unknown as ToolDefinition,
