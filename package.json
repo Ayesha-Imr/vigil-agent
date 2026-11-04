@@ -33,5 +33,26 @@
     "fast-check": "^4.10.2",
     "typescript": "^7.0.2",
     "vitest": "^5.1.0"
-  }
+  },
+  "files": [
+    "dist",
+    "skills",
+    "verification",
+    "docs",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Ayesha-Imr/vigil-agent"
+  },
+  "keywords": [
+    "agent",
+    "pi",
+    "always-on",
+    "proactive",
+    "telegram",
+    "formal-verification",
+    "tla+"
+  ]
 }

@@ -18,6 +18,15 @@ export interface PanelState {
 	model: string | null;
 }
 
+function approvalText(tool: string, args: string): string {
+	try {
+		const parsed = JSON.parse(args) as Record<string, unknown>;
+		if (tool === "bash" && typeof parsed.command === "string") return parsed.command.slice(0, 400);
+		if (typeof parsed.path === "string") return parsed.path;
+	} catch {}
+	return args.slice(0, 400);
+}
+
 export function panelState(d: Daemon): PanelState {
 	const s = d.s;
 	const needsYou: PanelState["needsYou"] = [];
@@ -26,7 +35,7 @@ export function panelState(d: Daemon): PanelState {
 			kind: "approval",
 			id: a.id,
 			title: `${a.requester} wants to run ${a.tool}`,
-			detail: `${a.reason}: ${a.args.slice(0, 400)}`,
+			detail: `${a.reason}: ${approvalText(a.tool, a.args)}`,
 			actions: [
 				{ label: "Approve", data: `approve:${a.id}` },
 				{ label: "Deny", data: `deny:${a.id}` },

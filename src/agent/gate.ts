@@ -38,6 +38,11 @@ export const DEFAULT_RULES: Rule[] = [
 	{ tool: "bash", match: String.raw`\b(sendmail|mail|mutt)\b.*@|\bssh\s+\S+@`, verdict: "risky", reason: "contacts another host or person" },
 ];
 
+const BUILTIN_TOOLS = new Set(["read", "bash", "edit", "write", "grep", "find", "ls", "codemode", "tool_search"]);
+const VIGIL_TOOLS = /^(notify|remember|recall|forget|spawn_ticket|ticket_\w+|schedule_job|list_jobs|cancel_job|add_watcher|list_watchers|remove_watcher|mute_topic|unmute_topic|report|ask_owner|triage_decide)$/;
+/** MCP and other external tools whose names suggest a side effect outside vigil. */
+const SIDE_EFFECT = /(send|create|delete|remove|update|post|write|cancel|pay|transfer|archive|move|reply|forward|invite|share|publish|purchase|order|book|submit|merge|close|trash)/i;
+
 export function loadGatePolicy(path: string, writableRoots: string[]): GatePolicy {
 	let rules: Rule[] = [];
 	if (existsSync(path)) {
@@ -63,6 +68,9 @@ export function classify(policy: GatePolicy, tool: string, input: Record<string,
 	for (const r of policy.rules) {
 		if (r.tool !== "*" && r.tool !== tool) continue;
 		if (new RegExp(r.match, "i").test(text)) return { verdict: r.verdict, reason: r.reason };
+	}
+	if (!BUILTIN_TOOLS.has(tool) && !VIGIL_TOOLS.test(tool) && SIDE_EFFECT.test(tool)) {
+		return { verdict: "risky", reason: `external tool ${tool} may change something outside vigil` };
 	}
 	if (tool === "write" || tool === "edit") {
 		const p = typeof input.path === "string" ? input.path : typeof input.file_path === "string" ? input.file_path : "";

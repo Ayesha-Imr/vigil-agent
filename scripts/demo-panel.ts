@@ -1,0 +1,28 @@
+// Starts a panel on :17878 (token "t") with made-up data, to look at the design: node --experimental-strip-types scripts/demo-panel.ts
+import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { HttpChannel } from "../src/channels/http.ts";
+import { defaultConfig, paths } from "../src/config.ts";
+import { Daemon } from "../src/daemon.ts";
+import { panelRoutes } from "../src/panel/panel.ts";
+const home = process.env.VIGIL_HOME ?? "/tmp/vigil-panel-demo"; const p = paths(home);
+const cfg = defaultConfig(); cfg.owner.name = "Ayesha"; cfg.owner.timezone = "Asia/Karachi"; cfg.channels.http = { port: 17878, token: "t" };
+let d: Daemon | undefined;
+const http = new HttpChannel({ port: 17878, token: "t", handlers: panelRoutes(() => d) });
+const rt = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null, allowModelNetwork: false });
+d = await Daemon.create({ paths: p, cfg, channels: new Map([["http", http]]), modelRuntime: rt, timers: false, log: () => {} });
+await d.start();
+const s = d.s;
+s.approvals.request("ticket tk_a1b2c3 (Ship blog post)", "bash", { command: "git push origin main" }, "pushes to a remote", 30*60000);
+const t1 = s.tickets.create({ title: "Ship blog post on RLVR safety", mandate: { request: "publish the draft", scope: "x", strength: "explicit" }, origin: { channel: "telegram", conversation: "1" } });
+s.tickets.setStage(t1.id, "working");
+const t2 = s.tickets.create({ title: "Fix flaky CI on graft-monitors", mandate: { request: "fix ci", scope: "x", strength: "explicit" }, origin: { channel: "telegram", conversation: "1" } });
+s.tickets.report(t2.id, "blocked", "The failing test needs a GPU runner; the repo has none configured. Want me to skip it on CPU?");
+const t3 = s.tickets.create({ title: "Compare 3 flights to Lisbon", mandate: { request: "flights", scope: "x", strength: "explicit" }, origin: { channel: "telegram", conversation: "1" } });
+s.db.run("INSERT INTO attentions (id, ticket_id, question, choices, status, created_at) VALUES ('at_1', ?, 'Two fares are within $15. Prefer the morning departure or the shorter layover?', '[\"Morning\",\"Short layover\"]', 'open', ?)", t3.id, Date.now());
+s.notifier.notify({ urgency: "low", topic: "arxiv", text: "2 new papers on reward hacking in RLVR match your reading list." });
+s.notifier.notify({ urgency: "normal", topic: "github", text: "aaliyan1230 opened a PR on go-rig: \"add retry budget\"." });
+s.scheduler.create({ name: "morning brief", kind: "cron", spec: "30 8 * * 1-5", prompt: "brief me", action: "agent", createdBy: "owner" });
+s.watchers.create({ name: "NeurIPS workshop deadlines", kind: "url", target: "https://example.org/workshops", everyMinutes: 180, instruction: "tell me when a deadline is extended" });
+console.log("ready");
+setInterval(() => {}, 1000);

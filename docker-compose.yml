@@ -1,0 +1,18 @@
+# docker compose up -d   (build first: npm ci && npm run build)
+# First time:  docker compose run --rm vigil init
+#              docker compose run --rm vigil login codex
+services:
+  vigil:
+    build: .
+    restart: unless-stopped
+    volumes:
+      - ./data:/data
+      # Download the TLA+ tools once for `vigil verify` (optional):
+      # - ./tools/tla2tools.jar:/opt/vigil/tools/tla2tools.jar:ro
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      # The panel and HTTP API. Keep it on loopback and reach it through Tailscale or a reverse
+      # proxy with TLS; never expose it to the internet directly.
+      - "127.0.0.1:7777:7777"

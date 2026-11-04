@@ -1,10 +1,14 @@
 // Building pi sessions for vigil's roles: the right model, tools, skills, approval gate, and a
 // system prompt whose time and memory are filled in fresh on every turn.
 
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import {
 	type AgentSession,
 	createAgentSession,
+	createCodemodeExtension,
+	createMcpExtension,
+	createToolSearchExtension,
 	DefaultResourceLoader,
 	type ExtensionFactory,
 	SessionManager,
@@ -94,6 +98,11 @@ export async function buildSession(s: Services, spec: SessionSpec): Promise<Buil
 		);
 	}
 
+	// MCP servers the owner configured in <agentDir>/mcp.json (calendar, mail, notes...). Their
+	// tools go through the approval gate like any other; see the mcp rule in gate.ts.
+	const mcp = (spec.role === "concierge" || spec.role === "worker") && existsSync(join(s.paths.agentDir, "mcp.json"));
+	if (mcp) extensions.push(createMcpExtension(), createToolSearchExtension(), createCodemodeExtension());
+
 	const loader = new DefaultResourceLoader({
 		cwd: spec.cwd,
 		agentDir: s.paths.agentDir,
@@ -134,6 +143,8 @@ export async function buildSession(s: Services, spec: SessionSpec): Promise<Buil
 		tools: [...spec.builtinTools, ...spec.customTools.map((t) => t.name)],
 		customTools: spec.customTools,
 	});
+	// MCP connects on session_start, which only fires once extensions are bound.
+	if (mcp) await session.bindExtensions({});
 	return { session, model };
 }
 

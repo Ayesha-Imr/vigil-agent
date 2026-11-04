@@ -5,3 +5,4 @@ dist/
 verification/**/states/
 verification/**/*_TTrace_*
 .env
+data/
