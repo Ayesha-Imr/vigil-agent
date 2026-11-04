@@ -28,7 +28,7 @@ const USAGE = `vigil — an always-on personal agent on pi
   vigil login opencode       store an OpenCode Go API key
   vigil models               which models each role would use
   vigil start                run the daemon in the foreground
-  vigil chat                 talk to vigil in this terminal (runs an embedded daemon)
+  vigil chat                 talk to vigil in this terminal (when the service is not running)
   vigil status               what is going on (reads the database)
   vigil doctor               check the setup
   vigil simulate [--max N] [--gap MIN] [--quiet HH:MM-HH:MM] [--synthetic]

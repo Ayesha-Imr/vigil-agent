@@ -373,6 +373,7 @@ verification skills, so they can do the same for your code.
 ```bash
 npm ci --ignore-scripts
 npm test                  # unit, property and end-to-end tests (no network, no API keys)
+vigil chat                # a terminal chat; it runs its own daemon, so stop the service first
 npm run check             # type check
 npm run verify            # TLA+ model checking
 node --experimental-strip-types scripts/demo-panel.ts   # the panel with made-up data
