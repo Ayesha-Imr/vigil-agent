@@ -26,6 +26,12 @@ export interface GatePolicy {
 	writableRoots: string[];
 }
 
+/**
+ * `git`, then any global options (`-C dir`, `-c key=value`, `--git-dir=...`, `--no-pager`), then
+ * the subcommand: a rule on `git push` must also catch `git -C repo push`.
+ */
+const GIT = String.raw`\bgit\b(?:\s+(?:-C|-c)\s+\S+|\s+--?[\w-]+(?:=\S+)?)*\s+`;
+
 /** Rules every install starts with. The owner adds more in policy.json; theirs are checked first. */
 export const DEFAULT_RULES: Rule[] = [
 	{
@@ -37,8 +43,8 @@ export const DEFAULT_RULES: Rule[] = [
 	{ tool: "*", match: String.raw`vigil\.db\b`, verdict: "forbidden", reason: "touches vigil's own database" },
 	{ tool: "bash", match: String.raw`\brm\b(?=[^;&|]*\s-(-recursive\b|[a-zA-Z]*[rR]))(?=[^;&|]*\s-(-force\b|[a-zA-Z]*f))`, verdict: "risky", reason: "recursive forced delete", flags: "" },
 	{ tool: "bash", match: String.raw`\bsudo\b|\bsu\s+-|\bdoas\b`, verdict: "risky", reason: "runs as another user" },
-	{ tool: "bash", match: String.raw`\bgit\s+push\b`, verdict: "risky", reason: "pushes to a remote" },
-	{ tool: "bash", match: String.raw`\bgit\s+(reset\s+--hard\b|clean\s+-[a-zA-Z]*f[a-zA-Z]*|branch\s+(-D|--delete\s+--force)\b|checkout\s+--\s+\.|restore\s+\.)`, verdict: "risky", reason: "discards git work", flags: "" },
+	{ tool: "bash", match: String.raw`${GIT}push\b`, verdict: "risky", reason: "pushes to a remote" },
+	{ tool: "bash", match: String.raw`${GIT}(reset\s+--hard\b|clean\s+-[a-zA-Z]*f[a-zA-Z]*|branch\s+(-D|--delete\s+--force)\b|checkout\s+--\s+\.|restore\s+\.)`, verdict: "risky", reason: "discards git work", flags: "" },
 	{ tool: "bash", match: String.raw`(curl|wget)[^|;&]*\|\s*(sudo\s+)?(ba|z)?sh\b`, verdict: "risky", reason: "pipes a download into a shell" },
 	{ tool: "bash", match: String.raw`\b(mkfs|fdisk|shutdown|reboot|halt|poweroff)\b|\bdd\s+if=|\bsystemctl\s+(stop|disable|mask)\b|\bkill\s+-9\s+1\b`, verdict: "risky", reason: "changes the system" },
 	{ tool: "bash", match: String.raw`\b(npm|pnpm|yarn)\s+publish\b|\bgh\s+(repo\s+(delete|create)|release\s+create|pr\s+merge|secret)\b|\bdocker\s+push\b`, verdict: "risky", reason: "publishes or changes something outside" },

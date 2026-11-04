@@ -18,6 +18,7 @@ import { type ChannelId, defaultConfig, loadConfig, type ModelRole, type Paths, 
 import { systemClock } from "./core/time.ts";
 import { Daemon } from "./daemon.ts";
 import { panelRoutes } from "./panel/panel.ts";
+import { runDemo } from "./demo.ts";
 import { runEvals } from "./evals.ts";
 import { recordedNotices, renderReport, simulate, syntheticWeek } from "./simulate.ts";
 
@@ -33,6 +34,7 @@ const USAGE = `vigil — an always-on personal agent on pi
   vigil doctor               check the setup
   vigil simulate [--max N] [--gap MIN] [--quiet HH:MM-HH:MM] [--synthetic]
                              replay your last week of notices under another attention policy
+  vigil demo                 a day with vigil in the terminal (no accounts needed)
   vigil eval [--model provider/id] [names...]
                              scripted scenarios against your real models (uses your login)
   vigil service              print a systemd unit for running vigil always
@@ -388,6 +390,8 @@ async function main(): Promise<void> {
 			return service(p);
 		case "simulate":
 			return simulateCmd(p, process.argv.slice(3));
+		case "demo":
+			return await runDemo();
 		case "eval": {
 			const argv = process.argv.slice(3);
 			const mi = argv.indexOf("--model");

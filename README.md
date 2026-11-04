@@ -54,6 +54,17 @@ That rule is enforced in code, not only in prompts:
 | **Skills and MCP** | Workers load vigil's shipped skills (including formal verification) and any MCP servers in `mcp.json` |
 | **Panel** | A small web page: what needs you first, then work in progress, the digest queue, the attention budget, schedule and activity |
 
+## Try it in 10 seconds
+
+```bash
+npx --yes github:Ayesha-Imr/vigil-agent demo
+```
+
+Or, from a clone: `npm ci --ignore-scripts && node --experimental-strip-types src/cli.ts demo`. It
+runs a day with vigil in your terminal: a reminder, background research, an approval for a `git
+push`, and a night-time notice held for the morning. The daemon, governor, scheduler, tools and
+approval gate are all real; only the model is scripted. No accounts needed.
+
 ## Quick start
 
 Requirements: Node 22.19+, a machine that stays on (a $5 VPS, a home server, a Raspberry Pi 5).
