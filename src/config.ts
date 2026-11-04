@@ -39,6 +39,8 @@ export interface VigilConfig {
 	};
 	workers: { max: number };
 	approvals: { ttlMinutes: number };
+	/** Pinged every 5 minutes while vigil runs (e.g. a healthchecks.io URL), so you hear when it dies. */
+	healthcheckUrl?: string;
 }
 
 export type ModelRole = "concierge" | "worker" | "triage" | "dream";

@@ -190,4 +190,63 @@ describe("vigil end to end", () => {
 		expect(h.daemon.s.paused()).toBe(true);
 		expect(h.calls.length).toBe(0);
 	});
+
+	it("observe mode records what triage would do and sends nothing; auto mode notifies", async () => {
+		let page = "<p>Deadline: March 1</p>";
+		const brain = (ctx: import("./helpers/harness.ts").Ctx) => {
+			if (ctx.system.includes("You triage events")) {
+				if (ctx.lastToolResult) return say("done");
+				return call("triage_decide", { action: "notify", reason: "deadline moved", text: "The workshop deadline moved to March 15.", urgency: "normal" });
+			}
+			return say("?");
+		};
+		h = await harness(brain, () => {}, { fetcher: async () => page });
+		h.daemon.s.watchers.create({ name: "deadline", kind: "url", target: "https://x.test", everyMinutes: 5, instruction: "tell me if the deadline changes" });
+		await h.daemon.tickOnce();
+		expect(h.calls.length).toBe(0); // the first check is a baseline, no model call
+		h.clock.advance(6 * MINUTE);
+		await h.daemon.tickOnce();
+		expect(h.calls.length).toBe(0); // unchanged page, still no model call
+		page = "<p>Deadline: March 15</p>";
+		h.clock.advance(6 * MINUTE);
+		await h.daemon.tickOnce();
+		await h.settle();
+		expect(h.calls.length).toBe(2); // one triage session: the decision, then its closing turn
+		expect(h.calls[0].system).toContain("Deadline: March 15");
+		expect(h.channel.sent.length).toBe(0); // observe: nothing sent
+		const events = h.daemon.s.db.all<{ text: string }>("SELECT text FROM events WHERE kind = 'observe'");
+		expect(events[0].text).toContain("would notify");
+
+		h.daemon.s.cfg.proactive.mode = "auto";
+		page = "<p>Deadline: March 20</p>";
+		h.clock.advance(6 * MINUTE);
+		await h.daemon.tickOnce();
+		await h.settle();
+		expect(h.channel.texts()).toEqual(["The workshop deadline moved to March 15."]);
+
+		const review = h.daemon.weeklyReview();
+		expect(review).toBe("review queued");
+		expect(h.daemon.s.notifier.waiting().some((n) => n.topic === "vigil:review")).toBe(true);
+	});
+
+	it("gives triage no tools beyond its decision (rule of two)", async () => {
+		const seen: string[] = [];
+		h = await harness((ctx) => {
+			if (ctx.system.includes("You triage events")) {
+				seen.push(ctx.system);
+				return ctx.lastToolResult ? say("x") : call("bash", { command: "cat ~/.ssh/id_rsa" });
+			}
+			return say("?");
+		}, (c) => {
+			c.proactive.mode = "auto";
+		}, { fetcher: async () => `<p>${Math.random()}</p>` });
+		h.daemon.s.watchers.create({ name: "w", kind: "url", target: "https://x.test", everyMinutes: 5, instruction: "anything" });
+		await h.daemon.tickOnce();
+		h.clock.advance(6 * MINUTE);
+		await h.daemon.tickOnce();
+		await h.settle();
+		const lastResult = h.calls.at(-1)?.lastToolResult ?? "";
+		expect(lastResult).toMatch(/not found|unknown|not available|Tool bash/i);
+		expect(h.channel.sent.length).toBe(0);
+	});
 });

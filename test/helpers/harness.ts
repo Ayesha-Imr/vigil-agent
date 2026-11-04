@@ -74,7 +74,7 @@ export interface Harness {
 	settle: () => Promise<void>;
 }
 
-export async function harness(brain: Brain, tweak: (cfg: VigilConfig) => void = () => {}): Promise<Harness> {
+export async function harness(brain: Brain, tweak: (cfg: VigilConfig) => void = () => {}, opts: { fetcher?: (url: string) => Promise<string> } = {}): Promise<Harness> {
 	const home = mkdtempSync(join(tmpdir(), "vigil-test-"));
 	const p = paths(home);
 	const cfg = defaultConfig();
@@ -118,6 +118,7 @@ export async function harness(brain: Brain, tweak: (cfg: VigilConfig) => void = 
 		clock,
 		modelRuntime: runtime,
 		timers: false,
+		fetcher: opts.fetcher,
 		log: () => {},
 	});
 	await daemon.start();

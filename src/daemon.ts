@@ -42,6 +42,7 @@ export interface DaemonOptions {
 
 export const HEARTBEAT_JOB = "heartbeat";
 export const DREAM_JOB = "dream";
+export const REVIEW_JOB = "weekly review";
 
 /** vigil's shipped skills directory (formal verification and others). */
 export function shippedSkillsDir(): string {
@@ -158,6 +159,11 @@ export class Daemon {
 			every(60_000, () => this.checkWatchers());
 			every(15_000, () => this.workers.pump());
 			every(10 * 60_000, () => s.models.refresh());
+			if (s.cfg.healthcheckUrl) {
+				const ping = () => fetch(s.cfg.healthcheckUrl!, { signal: AbortSignal.timeout(10_000) }).catch(() => {});
+				void ping();
+				every(5 * 60_000, ping);
+			}
 		}
 		this.workers.pump();
 		s.db.event("daemon.started", "vigil started");
@@ -188,6 +194,7 @@ export class Daemon {
 
 	private ensureSystemJobs(): void {
 		const p = this.s.cfg.proactive;
+		this.s.scheduler.ensure({ name: REVIEW_JOB, kind: "cron", spec: "0 18 * * 0", prompt: "built in", action: "agent" });
 		if (p.heartbeatMinutes > 0) {
 			this.s.scheduler.ensure({ name: HEARTBEAT_JOB, kind: "every", spec: String(p.heartbeatMinutes), prompt: "built in", action: "agent" });
 		}
@@ -207,6 +214,7 @@ export class Daemon {
 		try {
 			if (job.created_by === "system" && job.name === HEARTBEAT_JOB) return finish(await this.heartbeat());
 			if (job.created_by === "system" && job.name === DREAM_JOB) return finish(await this.dream());
+			if (job.created_by === "system" && job.name === REVIEW_JOB) return finish(this.weeklyReview());
 			switch (job.action) {
 				case "remind": {
 					// The owner chose this time, so it goes out as asked, quiet hours or not.
@@ -264,6 +272,30 @@ export class Daemon {
 				done: resolve,
 			});
 		});
+	}
+
+	/**
+	 * The weekly attention review, without a model: what vigil sent, what the owner disliked, and
+	 * what observe mode would have done. It waits for the digest like any low notice.
+	 */
+	weeklyReview(): string {
+		const s = this.s;
+		const since = s.clock.now() - 7 * DAY;
+		const count = (sql: string, ...args: (string | number)[]) => s.db.get<{ n: number }>(sql, ...args)?.n ?? 0;
+		const interrupts = count("SELECT COUNT(*) AS n FROM notices WHERE decision = 'deliver' AND created_at > ?", since);
+		const digested = count("SELECT COUNT(*) AS n FROM notices WHERE status = 'digested' AND created_at > ?", since);
+		const dropped = count("SELECT COUNT(*) AS n FROM notices WHERE status = 'dropped' AND created_at > ?", since);
+		const dislikes = s.db.all<{ text: string }>("SELECT text FROM events WHERE kind = 'feedback' AND at > ?", since);
+		const observed = s.db.all<{ text: string }>("SELECT text FROM events WHERE kind = 'observe' AND at > ? ORDER BY id DESC", since);
+		const done = count("SELECT COUNT(*) AS n FROM tickets WHERE ended_at > ? AND stage = 'done'", since);
+		if (!interrupts && !digested && !observed.length && !done) return "skipped: quiet week";
+		const lines = [`Week in review: ${done} task(s) done, ${interrupts} interruption(s), ${digested} item(s) in digests, ${dropped} dropped as repeats or muted.`];
+		if (dislikes.length) lines.push(`You disliked ${dislikes.length} notice(s); those topics are quieter for a week.`);
+		if (observed.length && s.cfg.proactive.mode === "observe") {
+			lines.push(`Observe mode would have acted ${observed.length} time(s), e.g. ${observed.slice(0, 2).map((o) => o.text.replace(/^would /, "")).join("; ")}. If that looks right: /mode auto`);
+		}
+		s.notifier.notify({ urgency: "low", topic: "vigil:review", text: lines.join(" "), dedupKey: `review:${localDate(s.clock.now(), s.cfg.owner.timezone)}` });
+		return "review queued";
 	}
 
 	/** Nightly memory consolidation in a throwaway session, then a git commit of the memory dir. */
