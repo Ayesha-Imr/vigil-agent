@@ -39,6 +39,8 @@ export interface Job {
 export interface JobRun {
 	job: Job;
 	slot: number;
+	/** When this run claimed the job; complete() frees the job only for the run that holds it. */
+	claimedAt: number;
 	/** Slots skipped because vigil was down or the previous run was still going. */
 	coalesced: number;
 	triggerId: number;
@@ -73,7 +75,8 @@ function countSlots(kind: JobKind, spec: string, from: number, to: number, tz: s
 	let t = from;
 	while (n < 1000) {
 		const next = nextRunAt(kind, spec, t, tz);
-		if (next === null || next >= to) break;
+		// A slot due exactly at the claim instant counts too: nextRunAt(now) moves past it.
+		if (next === null || next > to) break;
 		n++;
 		t = next;
 	}
@@ -172,20 +175,48 @@ export class Scheduler {
 					next,
 					job.id,
 				);
-				if (fresh) runs.push({ job, slot, coalesced, triggerId: ins.lastInsertRowid });
+				if (fresh) runs.push({ job, slot, coalesced, triggerId: ins.lastInsertRowid, claimedAt: now });
 			}
 			return runs;
 		});
 	}
 
 	/** A run finished: free the job for its next slot. */
-	complete(jobId: string, status: string): void {
+	complete(jobId: string, status: string, claimedAt?: number): void {
+		// A run that outlived its lease may finish after the job was claimed again: then it must not
+		// free the job the newer run holds (found by verification/scheduler, finding S2).
 		this.db.run(
-			"UPDATE jobs SET running_since = NULL, last_status = ?, last_run_at = ? WHERE id = ?",
+			`UPDATE jobs SET running_since = CASE WHEN ? IS NULL OR running_since = ? THEN NULL ELSE running_since END,
+			 last_status = ?, last_run_at = ? WHERE id = ?`,
+			claimedAt ?? null,
+			claimedAt ?? null,
 			status.slice(0, 500),
 			this.clock.now(),
 			jobId,
 		);
+	}
+
+	/** Clock triggers stored but never run (the process died after the claim), newest per job. */
+	unfinishedRuns(maxAgeMs: number): JobRun[] {
+		const rows = this.db.all<{ id: number; payload: string; created_at: number }>(
+			"SELECT id, payload, created_at FROM triggers WHERE source = 'clock' AND status = 'received' AND created_at > ? ORDER BY id DESC",
+			this.clock.now() - maxAgeMs,
+		);
+		const seen = new Set<string>();
+		const runs: JobRun[] = [];
+		for (const r of rows) {
+			const p = JSON.parse(r.payload) as { jobId: string; slot: number; coalesced: number };
+			const job = this.get(p.jobId);
+			if (!job || seen.has(job.id)) {
+				this.db.run("UPDATE triggers SET status = 'dropped', note = 'superseded after restart' WHERE id = ?", r.id);
+				continue;
+			}
+			seen.add(job.id);
+			runs.push({ job, slot: p.slot, coalesced: p.coalesced, triggerId: r.id, claimedAt: this.clock.now() });
+		}
+		// The rerun holds the job like a fresh claim, so it cannot overlap the job's next slot.
+		for (const run of runs) this.db.run("UPDATE jobs SET running_since = ? WHERE id = ?", run.claimedAt, run.job.id);
+		return runs;
 	}
 
 	/** On startup no run is alive: release every job that a dead process held. */

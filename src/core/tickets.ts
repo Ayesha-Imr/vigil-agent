@@ -153,7 +153,8 @@ export class Tickets {
 		const report: Report = { kind, summary, at: now };
 		const stage: Stage =
 			kind === "ready" ? "review" : kind === "blocked" ? "blocked" : kind === "failed" ? "failed" : kind === "waiting" ? "idle" : kind === "dropped" ? "done" : "working";
-		const ends = kind === "ready" || kind === "dropped";
+		// A ticket with input waiting stays open, so that input reaches a worker (finding W2).
+		const ends = (kind === "ready" || kind === "dropped") && !this.hasPendingInputs(id);
 		this.db.run(
 			`UPDATE tickets SET last_report = ?, stage = ?, updated_at = ?,
 			 status = CASE WHEN ? THEN 'ended' ELSE status END, ended_at = CASE WHEN ? THEN ? ELSE ended_at END WHERE id = ?`,

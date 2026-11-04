@@ -162,6 +162,8 @@ export class Daemon {
 	async start(): Promise<void> {
 		const s = this.s;
 		s.scheduler.recover();
+		// Runs claimed before a crash but never done run now (verification/scheduler, finding S3).
+		const unfinished = s.scheduler.unfinishedRuns(DAY);
 		const recovered = this.workers.recover();
 		if (recovered) this.log(`recovered ${recovered} ticket(s) that were mid-turn`);
 		this.ensureSystemJobs();
@@ -176,6 +178,7 @@ export class Daemon {
 		}
 		this.offerPairing();
 		await this.reprocessStuckTriggers();
+		for (const run of unfinished) void this.runJob(run);
 		if (this.useTimers) {
 			const every = (ms: number, fn: () => unknown) => {
 				const t = setInterval(() => {
@@ -259,7 +262,7 @@ export class Daemon {
 		const s = this.s;
 		const { job } = run;
 		const finish = (status: string) => {
-			s.scheduler.complete(job.id, status);
+			s.scheduler.complete(job.id, status, run.claimedAt);
 			s.db.run("UPDATE triggers SET status = 'done', note = ?, processed_at = ? WHERE id = ?", status.slice(0, 500), s.clock.now(), run.triggerId);
 		};
 		try {

@@ -2,6 +2,7 @@
 // `workers.max` tickets run a turn at once, plus one slot kept for a ticket the owner just wrote
 // to, so new background work never blocks the owner's conversation with existing work.
 
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { Ticket, TicketInput } from "../core/tickets.ts";
@@ -24,6 +25,8 @@ export class WorkerPool {
 	private readonly s: Services;
 	private readonly running = new Map<string, Promise<void>>();
 	private readonly sessions = new Map<string, AgentSession>();
+	/** When a ticket's worker last failed to start; it waits a minute before the next try. */
+	private readonly failedStart = new Map<string, number>();
 
 	constructor(s: Services) {
 		this.s = s;
@@ -39,16 +42,23 @@ export class WorkerPool {
 		const max = this.s.cfg.workers.max;
 		for (const t of this.s.tickets.runnable()) {
 			if (this.running.has(t.id)) continue;
+			if ((this.failedStart.get(t.id) ?? 0) > this.s.clock.now() - 60_000) continue;
 			const ownerWaiting = this.s.db.get<{ n: number }>(
 				"SELECT COUNT(*) AS n FROM ticket_inputs WHERE ticket_id = ? AND status = 'pending' AND kind IN ('owner_message', 'answer')",
 				t.id,
 			);
 			const limit = (ownerWaiting?.n ?? 0) > 0 ? max + 1 : max;
 			if (this.running.size >= limit) continue;
-			const run = this.run(t).finally(() => {
+			const run = this.run(t).then(
+				(started) => started,
+				() => false,
+			).then((started) => {
 				this.running.delete(t.id);
 				this.dispose(t.id);
-				this.pump();
+				// A ticket whose worker could not even start is retried by the 15 s timer, not right
+				// away: an immediate re-pump loops on promise callbacks and starves the event loop
+				// (verification/workers, finding W4).
+				if (started) this.pump();
 			});
 			this.running.set(t.id, run);
 		}
@@ -84,16 +94,22 @@ export class WorkerPool {
 		return session;
 	}
 
-	private async run(t: Ticket): Promise<void> {
+	/** Run a ticket's turns. Resolves false when the worker could not start at all. */
+	private async run(t0: Ticket): Promise<boolean> {
 		const startedAt = this.s.clock.now();
-		this.s.tickets.setStage(t.id, "working");
+		this.s.tickets.setStage(t0.id, "working");
 		let session: AgentSession;
 		try {
-			session = await this.session(t);
+			session = await this.session(t0);
 		} catch (err) {
-			this.s.tickets.report(t.id, "failed", `Could not start a worker: ${(err as Error).message}`);
-			return;
+			this.failedStart.set(t0.id, this.s.clock.now());
+			this.s.tickets.report(t0.id, "failed", `Could not start a worker: ${(err as Error).message}`);
+			return false;
 		}
+		this.failedStart.delete(t0.id);
+		// The owner may have stopped the ticket while the session was being built (finding W1).
+		const t = this.s.tickets.get(t0.id);
+		if (!t || t.stopped_by_owner || t.status === "ended") return true;
 		// Loop while inputs keep arriving during turns.
 		for (let turn = 0; turn < 20; turn++) {
 			const inputs = this.s.tickets.takeInputs(t.id);
@@ -109,24 +125,28 @@ export class WorkerPool {
 			}, limit);
 			timer.unref?.();
 			const r = await promptWithFallback(this.s, session, "worker", text).finally(() => clearTimeout(timer));
-			if (timedOut) {
-				this.s.tickets.report(t.id, "failed", `A turn ran past ${Math.round(limit / 60_000)} minutes and was stopped. Reply to continue.`);
-				return;
-			}
-			if (session.sessionFile) this.s.tickets.setSessionFile(t.id, session.sessionFile);
-			if (r.error) {
-				this.s.tickets.report(t.id, "failed", `The model failed: ${r.error.slice(0, 300)}`);
-				this.s.notifier.notify({ urgency: "normal", topic: `ticket:${t.id}`, text: `❌ ${t.title}: the model failed (${r.error.slice(0, 120)}). Reply to retry.`, ticketId: t.id });
-				return;
+			const persisted = session.sessionFile !== undefined && existsSync(session.sessionFile);
+			if (persisted) this.s.tickets.setSessionFile(t.id, session.sessionFile!);
+			if (timedOut || r.error) {
+				// A cut turn whose session never reached disk would lose these inputs with it: queue
+				// them again so the next run sees them (finding W3).
+				if (!persisted) for (const i of inputs) this.s.tickets.addInput(t.id, i.kind, i.text);
+				if (timedOut) {
+					this.s.tickets.report(t.id, "failed", `A turn ran past ${Math.round(limit / 60_000)} minutes and was stopped. Reply to continue.`);
+				} else {
+					this.s.tickets.report(t.id, "failed", `The model failed: ${r.error!.slice(0, 300)}`);
+					this.s.notifier.notify({ urgency: "normal", topic: `ticket:${t.id}`, text: `❌ ${t.title}: the model failed (${r.error!.slice(0, 120)}). Reply to retry.`, ticketId: t.id });
+				}
+				return true;
 			}
 			if (this.s.paused()) break;
 		}
 		const now = this.s.tickets.get(t.id);
-		if (!now) return;
+		if (!now) return true;
 		const reported = now.last_report && now.last_report.at >= startedAt && now.last_report.kind !== "progress";
 		if (now.status === "ended" && now.stage === "stopped") {
 			this.dispose(t.id);
-			return;
+			return true;
 		}
 		if (!reported && now.stage === "working") {
 			// A turn that ended without a final report waits for a trigger (dsh-superagent's rule).
@@ -135,6 +155,7 @@ export class WorkerPool {
 		// Sessions are on disk; keep none in memory between runs, so many idle tickets cost nothing.
 		// The next input resumes the session from its file.
 		this.dispose(t.id);
+		return true;
 	}
 
 	/** After a restart: tickets that were mid-turn get a recovery note and run again. */

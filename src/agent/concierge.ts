@@ -112,8 +112,11 @@ export class Concierge {
 				this.current = undefined;
 			}
 		} catch (err) {
-			// After shutdown the database is closed; anything else is logged, never left unhandled.
+			// After shutdown the database is closed; anything else is logged, never left unhandled,
+			// and a system run is released so its job is not held until the lease runs out.
 			if (!this.disposed) console.error(`[vigil] concierge: ${(err as Error).stack ?? err}`);
+			const cur = this.current;
+			if (cur?.kind === "system" && !this.disposed) cur.done?.(`error: ${(err as Error).message}`);
 		} finally {
 			this.busy = false;
 			this.current = undefined;
