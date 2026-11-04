@@ -29,7 +29,7 @@ That rule is enforced in code, not only in prompts:
 
 - **An attention governor** sits between "the agent wants to say something" and "your phone
   buzzes". Quiet hours, a daily interrupt budget (default 3), a minimum gap between interrupts,
-  dedup, muting and 👎 feedback. Everything that can wait goes into one digest at times you
+  dedup, and a Mute / Less button on every interruption. Everything that can wait goes into one digest at times you
   choose, or into vigil's next reply when you write first. The governor is a pure state machine,
   model-checked with TLC and property-tested against the same rules.
 - **It acts when you ask, or when a rule you wrote allows it.** Proactive work from watchers starts
@@ -54,14 +54,13 @@ That rule is enforced in code, not only in prompts:
 | **Skills and MCP** | Workers load vigil's shipped skills (including formal verification) and any MCP servers in `mcp.json` |
 | **Panel** | A small web page: what needs you first, then work in progress, the digest queue, the attention budget, schedule and activity |
 
-## Try it in 10 seconds
+## Try it without any accounts
 
 ```bash
 git clone https://github.com/Ayesha-Imr/vigil-agent && cd vigil-agent && npm ci --ignore-scripts && npm run build && node dist/cli.js demo
 ```
 
-It
-runs a day with vigil in your terminal: a reminder, background research, an approval for a `git
+It runs a day with vigil in your terminal: a reminder, background research, an approval for a `git
 push`, and a night-time notice held for the morning. The daemon, governor, scheduler, tools and
 approval gate are all real; only the model is scripted. No accounts needed.
 
@@ -101,8 +100,8 @@ Then message your bot. `/help` lists the commands.
 ### Telegram in two minutes
 
 1. In Telegram, talk to **@BotFather** → `/newbot` → copy the token into `vigil init`.
-2. Start vigil. Its log prints a one-time code: `telegram has no owner yet … /pair 482913`.
-3. Send `/pair 482913` to your bot. You are now its owner. Everyone else is dropped before a model
+2. Start vigil. Its log prints a one-time code, valid for 15 minutes: `telegram has no owner yet … /pair K7Q2M9XW4T`.
+3. Send `/pair K7Q2M9XW4T` to your bot. You are now its owner. Everyone else is dropped before a model
    ever sees their message, and the code is gone. (Or put your numeric user id from
    **@userinfobot** into `vigil init` and skip pairing.)
 
@@ -123,7 +122,7 @@ allow users to send messages in the Messages tab. Install it to your workspace, 
 (`xoxb-…`), and give both tokens to `vigil init` (or `VIGIL_SLACK_BOT_TOKEN` and
 `VIGIL_SLACK_APP_TOKEN`). Your member id (`U…`, from your profile → ⋮ → Copy member ID) goes in
 `owner.identities.slack`. Slack treats a leading `/` as a slash command, so to pair or use a
-command, type a space first: ` /pair 482913`. Buttons are Block Kit buttons; replies to a message
+command, type a space first: ` /pair K7Q2M9XW4T`. Buttons are Block Kit buttons; replies to a message
 go in its thread.
 
 ### Signal
@@ -135,7 +134,8 @@ account (a second number): link signal-cli as a secondary device of the phone th
 number directly with signal-cli. Then run `signal-cli -a +15551234567 daemon --http 127.0.0.1:8080`
 (0.13 or newer) and set `channels.signal` to `{ "url": "http://127.0.0.1:8080", "account":
 "+15551234567" }` and your own number (E.164, `+…`) in `owner.identities.signal`. Like WhatsApp,
-choices come as a numbered list and you reply with a digit.
+choices come as a numbered list and you reply with a digit; approvals are typed as `/approve <id>`
+or `/deny <id>`, never a bare digit.
 
 ### WhatsApp (read this first)
 
