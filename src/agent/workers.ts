@@ -78,6 +78,7 @@ export class WorkerPool {
 					: [...workerTools(this.s, t.id), ...webTools(() => this.s.cfg.search), delegateTool(this.s, t.id, t.dir)],
 			requester: `ticket ${t.id} (${t.title})`,
 			skills: true,
+			approvalRoute: () => (t.origin.channel === "system" ? undefined : { channel: t.origin.channel, conversation: t.origin.conversation }),
 		});
 		this.sessions.set(t.id, session);
 		return session;

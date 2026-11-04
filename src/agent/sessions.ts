@@ -18,6 +18,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { ModelRole } from "../config.ts";
+import type { OwnerRoute } from "../core/notifier.ts";
 import { localDate, localMinuteOfDay } from "../core/time.ts";
 import { approvalGate } from "./gate.ts";
 import { sandboxEnabled, sandboxHook } from "./sandbox.ts";
@@ -37,6 +38,8 @@ export interface SessionSpec {
 	requester: string | null;
 	skills: boolean;
 	model?: AnyModel;
+	/** Where approval requests go: the chat the request came from. Defaults to the owner's main channel. */
+	approvalRoute?: () => OwnerRoute | undefined;
 }
 
 export interface Built {
@@ -87,7 +90,7 @@ export async function buildSession(s: Services, spec: SessionSpec): Promise<Buil
 				requester,
 				cwd: spec.cwd,
 				ask: (id, text) => {
-					const route = s.ownerRoute();
+					const route = spec.approvalRoute?.() ?? s.ownerRoute();
 					if (!route) return;
 					s.outbox.enqueue({
 						...route,

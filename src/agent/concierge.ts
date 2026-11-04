@@ -48,6 +48,7 @@ export class Concierge {
 			customTools: [...conciergeTools(this.s, { currentOrigin: () => this.origin }), ...webTools(() => this.s.cfg.search)],
 			requester: "concierge",
 			skills: true,
+			approvalRoute: () => (this.origin.channel === "system" ? undefined : { channel: this.origin.channel, conversation: this.origin.conversation }),
 		});
 		this.session = session;
 		return session;
