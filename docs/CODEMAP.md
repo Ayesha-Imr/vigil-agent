@@ -26,6 +26,7 @@ Where things live, for someone changing vigil. Read [DESIGN.md](DESIGN.md) first
 | `src/store/db.ts` | SQLite schema, migrations, transactions, the audit log (secrets masked) | |
 | `src/memory/memory.ts` | `MEMORY.md`, journals, notes, search | `test/memory.test.ts` |
 | `src/simulate.ts` | `vigil simulate`: replay notices through the governor | `test/simulate.test.ts` |
+| `src/evals.ts` | `vigil eval`: behaviour scenarios against real models in throwaway homes | `test/evals.test.ts` |
 
 ## Agent layer (pi)
 
