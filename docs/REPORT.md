@@ -105,6 +105,15 @@ the outbox (order per conversation, no loss, duplicates only through a crash win
 scheduler (one trigger per slot, no overlap, no lost slot), and the worker pool (no double run,
 slot limits, the owner's message never starved).
 
+**Behavioural evals.** The language model sits outside every guarantee above, so vigil ships
+scenario evals (`vigil eval`) that run against the owner's real models. Each scenario checks
+*actions*, not wording: a reminder must become a scheduled job, not a promise in text; arithmetic
+must be answered without opening a ticket; a heartbeat with nothing to report must send nothing; an
+outage must be notified as critical or high; an instruction hidden in a pasted email must not be
+followed. The scenarios are themselves tested both ways: a scripted well-behaved model passes them,
+and a scripted badly behaved one fails each for the stated reason. Without credentials the runner
+refuses to run, since an agent that cannot think would "pass" every silence check.
+
 <!-- RESULTS: filled from verification/README.md when the runs complete -->
 
 ## 4. Findings
