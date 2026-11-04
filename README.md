@@ -226,6 +226,16 @@ flowchart LR
 research this was built from: the pi harness internals, and the 2026 landscape of always-on agents
 (DSH, OpenClaw, Hermes, Grok, ChatGPT Pulse) with best practices for proactive notifications.
 
+### Tuning the attention policy
+
+```bash
+vigil simulate --max 2 --gap 90 --quiet 23:00-07:30
+```
+
+This replays your last week of notices (or a synthetic noisy week) through the governor under a
+policy you're considering, and shows day by day how many times your phone would have buzzed, how
+many digests you'd have got, and what was dropped as a repeat. Nothing is sent.
+
 ## Formal verification
 
 The parts where a bug costs the most and tests reach the least are model-checked with TLA+:

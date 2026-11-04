@@ -15,6 +15,7 @@ import { type ChannelId, defaultConfig, loadConfig, type ModelRole, type Paths, 
 import { systemClock } from "./core/time.ts";
 import { Daemon } from "./daemon.ts";
 import { panelRoutes } from "./panel/panel.ts";
+import { recordedNotices, renderReport, simulate, syntheticWeek } from "./simulate.ts";
 
 const USAGE = `vigil — an always-on personal agent on pi
 
@@ -26,6 +27,8 @@ const USAGE = `vigil — an always-on personal agent on pi
   vigil chat                 talk to vigil in this terminal (runs an embedded daemon)
   vigil status               what is going on (reads the database)
   vigil doctor               check the setup
+  vigil simulate [--max N] [--gap MIN] [--quiet HH:MM-HH:MM] [--synthetic]
+                             replay your last week of notices under another attention policy
   vigil service              print a systemd unit for running vigil always
   vigil verify               run the formal verification (needs Java)
 
@@ -209,6 +212,25 @@ async function start(p: Paths, opts: { cli: boolean }): Promise<Daemon> {
 	return daemon;
 }
 
+function simulateCmd(p: Paths, argv: string[]): void {
+	const cfg = existsSync(p.config) ? loadConfig(p) : defaultConfig();
+	const flag = (name: string) => {
+		const i = argv.indexOf(name);
+		return i === -1 ? undefined : argv[i + 1];
+	};
+	const policy = { ...cfg.attention, timezone: cfg.owner.timezone };
+	if (flag("--max")) policy.maxInterruptsPerDay = Number(flag("--max"));
+	if (flag("--gap")) policy.minGapMinutes = Number(flag("--gap"));
+	if (flag("--quiet")) {
+		const [a, b] = flag("--quiet")!.split("-");
+		policy.quietHours = a && b ? { start: a, end: b } : null;
+	}
+	if (flag("--digests")) policy.digestTimes = flag("--digests")!.split(",").filter(Boolean);
+	const recorded = argv.includes("--synthetic") ? [] : recordedNotices(p.db, Date.now() - 7 * 86_400_000);
+	const stream = recorded.length ? recorded : syntheticWeek(Date.now() - 7 * 86_400_000);
+	console.log(renderReport(simulate(stream, policy), recorded.length ? `your last 7 days (${recorded.length} notices)` : "a synthetic noisy week", policy));
+}
+
 function service(p: Paths): void {
 	const here = dirname(fileURLToPath(import.meta.url));
 	const entry = join(here, "cli.js");
@@ -274,6 +296,8 @@ async function main(): Promise<void> {
 			return await doctor(p);
 		case "service":
 			return service(p);
+		case "simulate":
+			return simulateCmd(p, process.argv.slice(3));
 		case "verify":
 			return verify();
 		default:
