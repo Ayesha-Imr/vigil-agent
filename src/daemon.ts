@@ -626,6 +626,17 @@ export class Daemon {
 				say(w.length ? w.map((n) => `- ${n.text}`).join("\n") : "Nothing waiting.");
 				return true;
 			}
+			case "/memory": {
+				const text = s.memory.core().replace(/^# Memory[\s\S]*?(?=## )/, "").trim();
+				say(text.length > 3500 ? `${text.slice(0, 3500)}\n…` : text || "Nothing remembered yet.");
+				return true;
+			}
+			case "/jobs": {
+				const tz = s.cfg.owner.timezone;
+				const lines = s.scheduler.list().map((j) => `${j.enabled ? "" : "(off) "}${j.name}: ${j.kind} ${j.spec}${j.next_run_at ? `, next ${new Date(j.next_run_at).toLocaleString("en-GB", { timeZone: tz, weekday: "short", hour: "2-digit", minute: "2-digit" })}` : ""}${j.created_by === "system" ? " [built in]" : ` (${j.id})`}`);
+				say(lines.join("\n") || "No jobs.");
+				return true;
+			}
 			case "/tickets": {
 				const list = s.tickets.list("open");
 				say(list.length ? list.map((t) => `${t.id} [${t.stage}] ${t.title}`).join("\n") : "No open tickets.");
@@ -738,6 +749,7 @@ export class Daemon {
 const HELP = `vigil commands
 /status — what is going on
 /tickets — open background work · /stop <id>
+/jobs — what is scheduled · /memory — what vigil remembers
 /digest — what is waiting for the digest
 /mute <topic> [hours] · /unmute <topic>
 /mode off|observe|auto — proactive work
