@@ -191,3 +191,35 @@ one, and idempotency keys make the repeats harmless where the outside world allo
 A small web page served by the daemon (token auth). It lists first what waits for the owner
 (approvals, questions, blocked tickets), then running tickets, the digest queue, the interrupt
 budget, jobs and recent triggers. A healthy state takes no space.
+
+## Defence in depth for attention
+
+The governor's rules are checked in three places, so a single slip can't wake the owner at 3 a.m.:
+
+1. **Model checking**: `verification/governor` checks every ordering of offers, ticks, replies and
+   mutes within small bounds.
+2. **Property tests**: `test/governor.property.test.ts` drives the real TypeScript with random
+   action sequences and checks the same rules.
+3. **At runtime**: `src/core/invariants.ts` checks again, right before a send, against the recorded
+   delivery history in the database. That history is independent of the governor's own state. A
+   violation refuses the send and logs `invariant.violation`.
+
+## Relation to dsh-superagent
+
+| dsh-superagent | vigil | Why the difference |
+| --- | --- | --- |
+| A team; allowed lists per Source | One owner; identities per channel | A personal agent has exactly one principal. Other senders are dropped before any model sees them |
+| Source → Trigger → Thread → Eval → Ticket | Channel/clock/watcher → Trigger → gate → concierge or triage → Ticket | Same spine. Owner messages skip assessment: the owner *is* the allowed list |
+| Main session only routes | Concierge answers quick things itself | A personal assistant must answer "what's on today" without spawning a worker |
+| Accept modes `off/observe/auto` | Same, for watcher events | Kept as is: the right way to start an agent that acts unasked |
+| Mandate, Report, Attention | Same names, same meaning | Kept as is |
+| Stored work, outbox ordering per ticket and conversation | Same | Kept as is |
+| One slot reserved for a person's message to an existing ticket | Same | Kept as is |
+| Silence as a prompt rule | Silence as a prompt rule **plus** the governor | One person's attention is scarcer than a team's: interruptions get a hard budget in code |
+| No approvals (the team trusts the bot account) | Hash-bound, single-use approvals | vigil runs on the owner's own machine, with their credentials |
+| GitHub, Feishu | Telegram, Discord, WhatsApp, ntfy, HTTP, CLI | Where a person's phone already is |
+
+From other always-on agents: the heartbeat checklist and "nothing to report" replies
+(OpenClaw), a cheap deterministic gate before any model wakes (Hermes `wakeAgent`), nightly memory
+consolidation (Letta's sleep-time compute, OpenClaw's dreaming), and the rule of two for sessions
+that read untrusted input (Meta).
