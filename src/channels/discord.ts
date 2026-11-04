@@ -138,6 +138,14 @@ export class DiscordChannel implements Channel {
 		};
 	}
 
+	/** Discord shows "typing…" for about ten seconds per call. */
+	async typing(conversation: string): Promise<void> {
+		try {
+			const channel = await this.resolve(conversation);
+			if ("sendTyping" in channel) await channel.sendTyping();
+		} catch {}
+	}
+
 	async send(msg: OutboundMessage): Promise<SendResult> {
 		try {
 			const channel = await this.resolve(msg.conversation);

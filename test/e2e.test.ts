@@ -267,4 +267,25 @@ describe("vigil end to end", () => {
 		expect(d2.s.db.get<{ status: string }>("SELECT status FROM triggers WHERE external_id = '42:99'")?.status).toBe("done");
 		await d2.stop();
 	});
+
+	it("lets a worker fan out parallel helpers with delegate", async () => {
+		h = await harness((ctx) => {
+			if (isConcierge(ctx)) return ctx.lastToolResult ? say("Started.") : call("spawn_ticket", { title: "Compare two libs", request: "compare A and B", scope: "research" });
+			if (ctx.system.includes("You are a helper agent")) return say(ctx.lastUser.includes("library A") ? "A: fast, MIT" : "B: small, Apache-2.0");
+			if (isWorker(ctx)) {
+				if (ctx.lastToolResult.startsWith("Reported")) return say("x");
+				const results = ctx.messages.filter((m) => m.role === "toolResult").length;
+				if (results >= 2) {
+					const seen = JSON.stringify(ctx.messages);
+					return call("report", { kind: "ready", summary: seen.includes("A: fast") && seen.includes("B: small") ? "A is fast (MIT), B is small (Apache-2.0)." : "missing helper output" });
+				}
+				return fauxAssistantMessage([fauxToolCall("delegate", { task: "Summarize library A" }), fauxToolCall("delegate", { task: "Summarize library B" })], { stopReason: "toolUse" });
+			}
+			return say("?");
+		});
+		await h.channel.receive("compare A and B");
+		await h.settle();
+		expect(h.channel.texts().some((t) => t.includes("A is fast (MIT), B is small (Apache-2.0)."))).toBe(true);
+		expect(h.calls.filter((c) => c.system.includes("You are a helper agent")).length).toBe(2);
+	});
 });

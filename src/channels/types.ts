@@ -48,6 +48,8 @@ export interface Channel {
 	/** Start listening. Resolves once connected. */
 	start(onInbound: (msg: InboundMessage) => Promise<void>): Promise<void>;
 	send(msg: OutboundMessage): Promise<SendResult>;
+	/** Show a short-lived "typing…" indicator, where the app has one. */
+	typing?(conversation: string): Promise<void>;
 	/** The conversation to use for proactive messages to the owner, if known. */
 	ownerConversation(): string | undefined;
 	stop(): Promise<void>;

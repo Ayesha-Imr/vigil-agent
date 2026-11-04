@@ -4,6 +4,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { SearchConfig } from "./agent/web.ts";
 import { DEFAULT_POLICY, type GovernorPolicy } from "./core/governor.ts";
 
 export type ChannelId = "telegram" | "discord" | "whatsapp" | "http" | "cli" | "ntfy";
@@ -39,6 +40,8 @@ export interface VigilConfig {
 	};
 	workers: { max: number };
 	approvals: { ttlMinutes: number };
+	/** Web search backend for the web_search tool. */
+	search: SearchConfig;
 	/** Pinged every 5 minutes while vigil runs (e.g. a healthchecks.io URL), so you hear when it dies. */
 	healthcheckUrl?: string;
 }
@@ -72,6 +75,7 @@ export function defaultConfig(): VigilConfig {
 		proactive: { mode: "observe", heartbeatMinutes: 60, dreamAt: "04:00" },
 		workers: { max: 2 },
 		approvals: { ttlMinutes: 30 },
+		search: { provider: process.env.BRAVE_API_KEY ? "brave" : "duckduckgo" },
 	};
 }
 

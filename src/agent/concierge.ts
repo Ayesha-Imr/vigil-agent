@@ -12,6 +12,7 @@ import { CONCIERGE_PROMPT, fill } from "./prompts.ts";
 import { sendSolicited, type Services } from "./services.ts";
 import { buildSession, promptWithFallback } from "./sessions.ts";
 import { conciergeTools } from "./tools.ts";
+import { webTools } from "./web.ts";
 
 export type ConciergeInput =
 	| { kind: "owner"; channel: ChannelId; conversation: string; externalId: string; text: string; at: number; triggerIds?: number[] }
@@ -42,7 +43,7 @@ export class Concierge {
 			persistence: { kind: "dir", dir: join(this.s.paths.sessions, "concierge"), file },
 			prompt: fill(CONCIERGE_PROMPT, { owner: this.s.cfg.owner.name, now: "{{now}}", tz: "{{tz}}", mode: "{{mode}}", memory: "{{memory}}" }),
 			builtinTools: ["read", "grep", "find", "ls", "bash", "write", "edit"],
-			customTools: conciergeTools(this.s, { currentOrigin: () => this.origin }),
+			customTools: [...conciergeTools(this.s, { currentOrigin: () => this.origin }), ...webTools(() => this.s.cfg.search)],
 			requester: "concierge",
 			skills: true,
 		});
@@ -130,7 +131,8 @@ export class Concierge {
 			if (waiting.length) {
 				text += `\n\n(While you were away, not yet told to the owner:\n${waiting.map((n) => `- [${n.effective}] ${n.text}`).join("\n")})`;
 			}
-			const r = await promptWithFallback(this.s, session, "concierge", text);
+			const typing = this.typing(input.channel, input.conversation);
+			const r = await promptWithFallback(this.s, session, "concierge", text).finally(() => clearInterval(typing));
 			const out = r.error && !r.text ? `Something went wrong on my side (${r.error.slice(0, 200)}). Try again in a bit.` : r.text;
 			if (out && !SILENT.test(out)) this.reply(input, out);
 			this.s.db.setKv(SESSION_KEY, session.sessionFile ?? null);
@@ -142,6 +144,15 @@ export class Concierge {
 		const r = await promptWithFallback(this.s, session, "concierge", `[${input.tag}] ${input.text}`);
 		this.s.db.setKv(SESSION_KEY, session.sessionFile ?? null);
 		input.done?.(r.error ? `error: ${r.error}` : r.text.slice(0, 500));
+	}
+
+	/** Show "typing…" in the owner's chat while a reply is being made. */
+	private typing(channel: ChannelId, conversation: string): NodeJS.Timeout {
+		const tick = () => void this.s.typing(channel, conversation);
+		tick();
+		const t = setInterval(tick, 4_000);
+		t.unref?.();
+		return t;
 	}
 
 	/** An owner message counts as handled only once it was answered; until then a restart replays it. */

@@ -118,6 +118,9 @@ export class Daemon {
 			skillsDir: shippedSkillsDir(),
 			paused: () => db.getKv<boolean>("paused") === true,
 			wakeWorkers: () => {},
+			typing: async (channel, conversation) => {
+				await o.channels.get(channel)?.typing?.(conversation).catch(() => {});
+			},
 		};
 		const d = new Daemon(s, o.channels, o.timers ?? true, o.log ?? ((l) => console.log(l)));
 		d.reloadPolicy = () => {

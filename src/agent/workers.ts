@@ -8,7 +8,9 @@ import type { Ticket, TicketInput } from "../core/tickets.ts";
 import { fill, WORKER_PROMPT } from "./prompts.ts";
 import type { Services } from "./services.ts";
 import { buildSession, promptWithFallback } from "./sessions.ts";
+import { delegateTool } from "./delegate.ts";
 import { workerTools } from "./tools.ts";
+import { webTools } from "./web.ts";
 
 const BUILTIN = ["read", "bash", "edit", "write", "grep", "find", "ls"];
 
@@ -63,7 +65,7 @@ export class WorkerPool {
 			persistence: { kind: "dir", dir: join(this.s.paths.sessions, "tickets", t.id), file: t.session_file },
 			prompt: fill(WORKER_PROMPT, { owner: this.s.cfg.owner.name, dir: t.dir, mandate, now: "{{now}}", tz: "{{tz}}", memory: "{{memory}}" }),
 			builtinTools: BUILTIN,
-			customTools: workerTools(this.s, t.id),
+			customTools: [...workerTools(this.s, t.id), ...webTools(() => this.s.cfg.search), delegateTool(this.s, t.id, t.dir)],
 			requester: `ticket ${t.id} (${t.title})`,
 			skills: true,
 		});

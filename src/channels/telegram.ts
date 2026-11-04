@@ -76,6 +76,11 @@ export class TelegramChannel implements Channel {
 		});
 	}
 
+	/** Telegram shows "typing…" for about five seconds per call. */
+	async typing(conversation: string): Promise<void> {
+		await this.bot.api.sendChatAction(conversation, "typing").catch(() => {});
+	}
+
 	async send(msg: OutboundMessage): Promise<SendResult> {
 		const chatId = msg.conversation;
 		const keyboard = inlineKeyboard(msg.buttons);

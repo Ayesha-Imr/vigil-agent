@@ -1,7 +1,7 @@
 // The services every part of the agent layer reaches: one object, built by the daemon.
 
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import type { Paths, VigilConfig } from "../config.ts";
+import type { ChannelId, Paths, VigilConfig } from "../config.ts";
 import type { Approvals } from "../core/approvals.ts";
 import type { Notifier, OwnerRoute } from "../core/notifier.ts";
 import type { Outbox } from "../core/outbox.ts";
@@ -36,6 +36,8 @@ export interface Services {
 	paused: () => boolean;
 	/** Wake the worker pool after something queued work for it. */
 	wakeWorkers: () => void;
+	/** Show a typing indicator in a chat, where the channel supports it. Never throws. */
+	typing: (channel: ChannelId, conversation: string) => Promise<void>;
 }
 
 /** Send a message the owner asked for (a reply or a ticket result): no budget, but quiet hours hold it. */
