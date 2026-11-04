@@ -303,8 +303,14 @@ verification skills, so they can do the same for your code.
   it as root.
 - Only owner identities can talk to it. Messages, web pages, files and tool output are treated as
   data, and they can't widen permissions: the gate, the allowlist and the governor are code.
-- `auth.json` holds your provider tokens. It is readable by vigil's user only, and the agent's own
-  tools can't touch it.
+- **Approvals come from your chat app**, where your identity is checked. Approve/deny presses over
+  the HTTP API (panel, ntfy actions) are refused by default, because any process on the machine
+  that finds the token could press them, and that includes the agent's own tools. Set
+  `channels.http.allowApprovals` only if tools can't read vigil's files (a sandbox or container).
+- vigil's own config, policy, credentials and transcripts are off limits to every tool, ahead of
+  any rule you add. Secret environment variables are removed from the process after startup, so
+  the shells the agent runs don't inherit them.
+- `web_fetch` refuses loopback, private and cloud-metadata addresses on every redirect hop.
 - The approval gate is a guard rail, not a sandbox: a determined program can find a way around a
   regex. For real isolation, run vigil in a container or VM.
 
