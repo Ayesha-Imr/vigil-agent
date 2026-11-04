@@ -32,7 +32,7 @@ export function createChannels(cfg: VigilConfig, paths: Paths, opts: CreateChann
 	const ch = cfg.channels;
 	const out = new Map<ChannelId, Channel>();
 	const ownerNote = (id: ChannelId): void => {
-		if (!ids[id]?.length) log(`channels: ${id}: no owner identity in owner.identities.${id}; messages will be dropped and nothing proactive goes there`);
+		if (!ids[id]?.length) log(`channels: ${id}: no owner identity in owner.identities.${id}; vigil prints a /pair code at startup; send it to the bot from your account`);
 	};
 
 	if (ch.telegram) {
