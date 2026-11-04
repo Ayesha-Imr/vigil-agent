@@ -59,6 +59,12 @@ export class Notifier {
 	/** Offer a notification to the governor; it is sent now, later, or never. */
 	notify(input: Omit<NoticeInput, "id"> & { id?: string }): Notice {
 		const now = this.clock.now();
+		// With no channel to send on, nothing may count as delivered: the notice waits for the digest
+		// (or the owner's next message) instead of spending the budget and the dedup window.
+		if (!this.route() && input.urgency !== "low") {
+			this.db.event("notice.unroutable", `no owner channel; "${input.text.slice(0, 80)}" waits for the digest`);
+			input = { ...input, urgency: "low" };
+		}
 		return this.db.tx(() => {
 			const r = offer(this.state, { ...input, id: input.id ?? `nt_${randomUUID().slice(0, 8)}` }, now, this.policy());
 			// Guard against the recorded history before this notice is recorded as delivered.

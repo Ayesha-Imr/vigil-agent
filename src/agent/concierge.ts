@@ -10,7 +10,7 @@ import type { ChannelId } from "../config.ts";
 import type { Origin } from "../core/tickets.ts";
 import { localMinuteOfDay } from "../core/time.ts";
 import { CONCIERGE_PROMPT, fill } from "./prompts.ts";
-import { sendSolicited, type Services, takeConciergeNotes } from "./services.ts";
+import { noteToConcierge, sendSolicited, type Services, takeConciergeNotes } from "./services.ts";
 import { buildSession, promptWithFallback } from "./sessions.ts";
 import { conciergeTools } from "./tools.ts";
 import { webTools } from "./web.ts";
@@ -169,9 +169,15 @@ export class Concierge {
 				text += `\n\n(While you were away, not yet told to the owner:\n${waiting.map((n) => `- [${n.effective}] ${n.text}`).join("\n")})`;
 			}
 			const typing = this.typing(input.channel, input.conversation);
-			const files = await this.s.fetchAttachments(input.channel, input.attachments ?? [], session.model?.input?.includes("image") ?? false);
-			if (files.notes.length) text += `\n${files.notes.join("\n")}`;
-			const r = await promptWithFallback(this.s, session, "concierge", text, files.images).finally(() => clearInterval(typing));
+			let r: Awaited<ReturnType<typeof promptWithFallback>>;
+			try {
+				const files = await this.s.fetchAttachments(input.channel, input.attachments ?? [], session.model?.input?.includes("image") ?? false);
+				if (files.notes.length) text += `\n${files.notes.join("\n")}`;
+				r = await promptWithFallback(this.s, session, "concierge", text, files.images);
+			} finally {
+				clearInterval(typing);
+			}
+			if (r.error && !r.text) for (const n of notes) noteToConcierge(this.s, n);
 			const out = r.error && !r.text ? `Something went wrong on my side (${r.error.slice(0, 200)}). Try again in a bit.` : r.text;
 			if (out && !SILENT.test(out)) {
 				this.reply(input, out);
@@ -184,6 +190,7 @@ export class Concierge {
 
 		this.origin = { channel: "system", conversation: "" };
 		const r = await promptWithFallback(this.s, session, "concierge", `${since}[${input.tag}] ${input.text}`);
+		if (r.error && !r.text) for (const n of notes) noteToConcierge(this.s, n);
 		this.s.db.setKv(SESSION_KEY, session.sessionFile ?? null);
 		if (this.preempted === input) {
 			// The owner interrupted this run; it goes again after their message, once.

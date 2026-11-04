@@ -28,7 +28,12 @@ export interface GatePolicy {
 
 /** Rules every install starts with. The owner adds more in policy.json; theirs are checked first. */
 export const DEFAULT_RULES: Rule[] = [
-	{ tool: "*", match: String.raw`(^|[^\w.-])auth\.json\b|\.ssh\b|id_(rsa|ed25519|ecdsa)\b|\.gnupg\b|mcp-auth\.json\b`, verdict: "forbidden", reason: "touches credentials" },
+	{
+		tool: "*",
+		match: String.raw`(^|[^\w.-])auth\.json\b|\.ssh\b|id_(rsa|ed25519|ecdsa)\b|\.gnupg\b|mcp-auth\.json\b|\.aws/|\.config/gh/|\.config/gcloud/|\.azure/|\.netrc\b|\.git-credentials\b|\.docker/config\.json|\.kube/config\b|\.npmrc\b|\.pypirc\b`,
+		verdict: "forbidden",
+		reason: "touches credentials",
+	},
 	{ tool: "*", match: String.raw`vigil\.db\b`, verdict: "forbidden", reason: "touches vigil's own database" },
 	{ tool: "bash", match: String.raw`\brm\b(?=[^;&|]*\s-(-recursive\b|[a-zA-Z]*[rR]))(?=[^;&|]*\s-(-force\b|[a-zA-Z]*f))`, verdict: "risky", reason: "recursive forced delete", flags: "" },
 	{ tool: "bash", match: String.raw`\bsudo\b|\bsu\s+-|\bdoas\b`, verdict: "risky", reason: "runs as another user" },

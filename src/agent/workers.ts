@@ -15,11 +15,12 @@ import { webTools } from "./web.ts";
 
 const BUILTIN = ["read", "bash", "edit", "write", "grep", "find", "ls"];
 /**
- * Work vigil inferred from untrusted content (a watcher change) gets read-only tools: an injected
- * page must not be able to steer a worker into running commands or writing files. The owner can
- * reply to the ticket to continue with full tools as explicit work.
+ * Work vigil inferred from untrusted content (a watcher change) gets the web and its report tools,
+ * and no file tools at all: untrusted input plus network access must not also have private data
+ * (the rule of two), or an injected page could read a file and send it out. The owner can reply to
+ * the ticket to continue it as explicit work.
  */
-const READ_ONLY = ["read", "grep", "find", "ls"];
+const READ_ONLY: string[] = [];
 
 export class WorkerPool {
 	private readonly s: Services;
@@ -27,6 +28,8 @@ export class WorkerPool {
 	private readonly sessions = new Map<string, AgentSession>();
 	/** When a ticket's worker last failed to start; it waits a minute before the next try. */
 	private readonly failedStart = new Map<string, number>();
+	/** Consecutive turns cut by a timeout or a model error, per ticket. */
+	private readonly cutTurns = new Map<string, number>();
 
 	constructor(s: Services) {
 		this.s = s;
@@ -51,7 +54,13 @@ export class WorkerPool {
 			if (this.running.size >= limit) continue;
 			const run = this.run(t).then(
 				(started) => started,
-				() => false,
+				(err: unknown) => {
+					// Never strand a ticket in "working" without a word.
+					this.s.db.event("worker.error", `${t.id}: ${(err as Error)?.stack ?? err}`);
+					this.s.tickets.report(t.id, "failed", `The worker stopped on an internal error: ${(err as Error)?.message ?? err}`);
+					this.failedStart.set(t.id, this.s.clock.now());
+					return false;
+				},
 			).then((started) => {
 				this.running.delete(t.id);
 				this.dispose(t.id);
@@ -129,32 +138,33 @@ export class WorkerPool {
 			if (persisted) this.s.tickets.setSessionFile(t.id, session.sessionFile!);
 			if (timedOut || r.error) {
 				// A cut turn whose session never reached disk would lose these inputs with it: queue
-				// them again so the next run sees them (finding W3).
-				if (!persisted) for (const i of inputs) this.s.tickets.addInput(t.id, i.kind, i.text);
+				// them again so the next run sees them (finding W3), at most twice in a row and after a
+				// minute's pause, so a persistent model error cannot become a retry storm.
+				const fails = (this.cutTurns.get(t.id) ?? 0) + 1;
+				this.cutTurns.set(t.id, fails);
+				if (!persisted && fails <= 2) for (const i of inputs) this.s.tickets.addInput(t.id, i.kind, i.text);
+				this.failedStart.set(t.id, this.s.clock.now());
 				if (timedOut) {
 					this.s.tickets.report(t.id, "failed", `A turn ran past ${Math.round(limit / 60_000)} minutes and was stopped. Reply to continue.`);
 				} else {
 					this.s.tickets.report(t.id, "failed", `The model failed: ${r.error!.slice(0, 300)}`);
 					this.s.notifier.notify({ urgency: "normal", topic: `ticket:${t.id}`, text: `❌ ${t.title}: the model failed (${r.error!.slice(0, 120)}). Reply to retry.`, ticketId: t.id });
 				}
-				return true;
+				return false;
 			}
+			this.cutTurns.delete(t.id);
 			if (this.s.paused()) break;
 		}
 		const now = this.s.tickets.get(t.id);
 		if (!now) return true;
 		const reported = now.last_report && now.last_report.at >= startedAt && now.last_report.kind !== "progress";
-		if (now.status === "ended" && now.stage === "stopped") {
-			this.dispose(t.id);
-			return true;
-		}
+		if (now.status === "ended" && now.stage === "stopped") return true;
 		if (!reported && now.stage === "working") {
 			// A turn that ended without a final report waits for a trigger (dsh-superagent's rule).
 			this.s.tickets.report(t.id, "waiting", "ended a turn without a final report");
 		}
-		// Sessions are on disk; keep none in memory between runs, so many idle tickets cost nothing.
-		// The next input resumes the session from its file.
-		this.dispose(t.id);
+		// pump() disposes the session after every run: sessions are on disk, and the next input
+		// resumes from the file, so many idle tickets cost nothing.
 		return true;
 	}
 

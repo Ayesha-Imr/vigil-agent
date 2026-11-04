@@ -271,15 +271,21 @@ export class Daemon {
 			if (job.created_by === "system" && job.name === REVIEW_JOB) return finish(this.weeklyReview());
 			switch (job.action) {
 				case "remind": {
-					// The owner chose this time, so it goes out as asked, quiet hours or not.
+					// The owner chose this time, so it goes out as asked, quiet hours or not. Keyed by
+					// slot, so a run replayed after a crash does not remind twice.
+					const ref = `${job.id}:${run.slot}`;
+					const already = s.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM outbox WHERE ref_kind = 'notice' AND ref_id = ?", ref)?.n ?? 0;
 					const route = s.ownerRoute();
-					if (route) s.outbox.enqueue({ ...route, text: `⏰ ${job.prompt}`, ref: { kind: "notice", id: job.id } });
+					if (route && !already) s.outbox.enqueue({ ...route, text: `⏰ ${job.prompt}`, ref: { kind: "notice", id: ref } });
 					return finish("reminded");
 				}
 				case "ticket": {
+					const rule = `job ${job.id} slot ${run.slot}`;
+					const existing = s.tickets.list("all").find((t) => t.mandate.rule === rule);
+					if (existing) return finish(`ticket ${existing.id} (already opened for this slot)`);
 					const t = s.tickets.create({
 						title: job.name,
-						mandate: { request: job.prompt, scope: "The scheduled task as written by the owner.", strength: "explicit", rule: `job ${job.id}` },
+						mandate: { request: job.prompt, scope: "The scheduled task as written by the owner.", strength: "explicit", rule },
 						origin: { channel: "system", conversation: "" },
 					});
 					this.workers.pump();
