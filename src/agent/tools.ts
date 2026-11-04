@@ -277,7 +277,8 @@ export function workerTools(s: Services, ticketId: string): ToolDefinition[] {
 	const ticket = () => s.tickets.get(ticketId)!;
 	const originRoute = () => {
 		const o = ticket().origin;
-		return o.channel === "system" ? undefined : { channel: o.channel, conversation: o.conversation };
+		// HTTP and ntfy have nobody listening later: results and questions go to the owner's main chat.
+		return o.channel === "system" || o.channel === "http" || o.channel === "ntfy" ? undefined : { channel: o.channel, conversation: o.conversation };
 	};
 	return [
 		notifyTool(s, ticketId),
