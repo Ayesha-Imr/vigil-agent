@@ -157,6 +157,17 @@ export function loadConfig(p: Paths = paths()): VigilConfig {
 	}
 	const cfg = merge(defaultConfig(), fromDisk);
 	const env = process.env;
+	for (const [k, path] of [
+		["VIGIL_TELEGRAM_TOKEN", "channels.telegram.token"],
+		["VIGIL_DISCORD_TOKEN", "channels.discord.token"],
+		["VIGIL_SLACK_BOT_TOKEN", "channels.slack.botToken"],
+		["VIGIL_SLACK_APP_TOKEN", "channels.slack.appToken"],
+		["VIGIL_HTTP_TOKEN", "channels.http.token"],
+		["VIGIL_NTFY_TOKEN", "channels.ntfy.token"],
+	] as const) {
+		const v = env[k];
+		if (v) fromEnv.set(path, v);
+	}
 	if (env.VIGIL_TELEGRAM_TOKEN) cfg.channels.telegram = { ...cfg.channels.telegram, token: env.VIGIL_TELEGRAM_TOKEN };
 	if (env.VIGIL_DISCORD_TOKEN) cfg.channels.discord = { ...cfg.channels.discord, token: env.VIGIL_DISCORD_TOKEN };
 	if (env.VIGIL_SLACK_BOT_TOKEN) cfg.channels.slack = { ...cfg.channels.slack, botToken: env.VIGIL_SLACK_BOT_TOKEN };
@@ -183,9 +194,17 @@ function validate(cfg: VigilConfig): void {
 	if (cfg.attention.dedupWindowMinutes > 7 * 1440) throw new Error("attention.dedupWindowMinutes must be at most 10080 (a week)");
 }
 
+/** Secrets that came from the environment, by config path: saveConfig never writes them to disk. */
+const fromEnv = new Map<string, string>();
+
 export function saveConfig(cfg: VigilConfig, p: Paths = paths()): void {
 	mkdirSync(p.home, { recursive: true });
-	writeFileSync(p.config, `${JSON.stringify(cfg, null, 2)}\n`, { mode: 0o600 });
+	const copy = structuredClone(cfg) as unknown as Record<string, Record<string, Record<string, unknown>>>;
+	for (const [path, value] of fromEnv) {
+		const [a, b, c] = path.split(".");
+		if (copy[a]?.[b]?.[c] === value) delete copy[a][b][c];
+	}
+	writeFileSync(p.config, `${JSON.stringify(copy, null, 2)}\n`, { mode: 0o600 });
 }
 
 /** Environment variables that hold secrets: read once at startup, then removed from the process,
@@ -219,5 +238,7 @@ export function governorPolicy(cfg: VigilConfig): GovernorPolicy {
 export function isOwner(cfg: VigilConfig, channel: ChannelId, senderId: string): boolean {
 	// The CLI runs on the server itself and the HTTP API checks its token before it gets here.
 	if (channel === "cli" || channel === "http") return true;
-	return (cfg.owner.identities[channel] ?? []).includes(senderId);
+	// Phone-number identities are compared by digits, so "+92 300 123-4567" in the config matches.
+	const norm = (v: string) => (channel === "signal" || channel === "whatsapp") && !/[a-z]/i.test(v.replace(/@s\.whatsapp\.net$/, "")) ? v.replace(/\D/g, "") : v.toLowerCase();
+	return (cfg.owner.identities[channel] ?? []).some((id) => norm(id) === norm(senderId));
 }

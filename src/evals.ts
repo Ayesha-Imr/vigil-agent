@@ -2,10 +2,10 @@
 // Each scenario checks what vigil did (tools called, jobs created, files written, messages sent),
 // not its exact words. Useful to check a model before relying on it, and to compare models.
 
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { Channel, InboundMessage, OutboundMessage, SendResult } from "./channels/types.ts";
 import { defaultConfig, type ModelRole, type Paths, paths as pathsFor } from "./config.ts";
 import { Daemon } from "./daemon.ts";
@@ -181,20 +181,23 @@ export async function runEvals(
 	userPaths: Paths,
 	opts: { only?: string[]; model?: string; log?: (l: string) => void; modelRuntime?: ModelRuntime } = {},
 ): Promise<EvalResult[]> {
-	const auth = join(userPaths.agentDir, "auth.json");
+	// Your real credential store, shared in place: pi locks auth.json, so a token refresh here is
+	// seen by the running daemon too. A copy could rotate a refresh token and log the daemon out.
+	const runtime =
+		opts.modelRuntime ??
+		(await ModelRuntime.create({ authPath: join(userPaths.agentDir, "auth.json"), modelsPath: join(userPaths.agentDir, "models.json"), allowModelNetwork: true }));
 	const results: EvalResult[] = [];
 	for (const sc of SCENARIOS.filter((x) => !opts.only?.length || opts.only.includes(x.name))) {
 		const home = mkdtempSync(join(tmpdir(), "vigil-eval-"));
 		const p = pathsFor(home);
 		mkdirSync(p.agentDir, { recursive: true });
-		if (existsSync(auth)) copyFileSync(auth, join(p.agentDir, "auth.json"));
 		const cfg = defaultConfig();
 		cfg.owner = { name: "Sam", timezone: "UTC", identities: { telegram: ["1"] }, notify: ["telegram"] };
 		cfg.attention.quietHours = null;
 		cfg.proactive = { mode: "auto", heartbeatMinutes: 0, dreamAt: null };
 		if (opts.model) for (const r of ["concierge", "worker", "triage", "dream"] as ModelRole[]) cfg.models[r] = [opts.model];
 		const ch = new EvalChannel();
-		const d = await Daemon.create({ paths: p, cfg, channels: new Map([["telegram", ch]]), timers: false, log: () => {}, modelRuntime: opts.modelRuntime });
+		const d = await Daemon.create({ paths: p, cfg, channels: new Map([["telegram", ch]]), timers: false, log: () => {}, modelRuntime: runtime });
 		const started = Date.now();
 		let reason: string | null;
 		try {

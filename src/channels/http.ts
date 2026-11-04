@@ -103,7 +103,8 @@ export class HttpServer {
 		if (this.server) return this.port();
 		const server = createServer((req, res) => {
 			this.handle(req, res).catch((err: unknown) => {
-				this.log(`http: ${req.method} ${req.url} failed: ${errorText(err)}`);
+				// The path only: the query may carry the token.
+				this.log(`http: ${req.method} ${(req.url ?? "").split("?")[0]} failed: ${errorText(err)}`);
 				if (!res.headersSent) write(res, { status: 500, body: { error: "internal error" } });
 				else res.end();
 			});

@@ -171,12 +171,16 @@ export class Concierge {
 			}
 			const typing = this.typing(input.channel, input.conversation);
 			let r: Awaited<ReturnType<typeof promptWithFallback>>;
+			let settled = false;
 			try {
 				const files = await this.s.fetchAttachments(input.channel, input.attachments ?? [], session.model?.input?.includes("image") ?? false);
 				if (files.notes.length) text += `\n${files.notes.join("\n")}`;
 				r = await promptWithFallback(this.s, session, "concierge", text, files.images);
+				settled = true;
 			} finally {
 				clearInterval(typing);
+				// A turn that threw must not keep the notices it claimed out of every digest.
+				if (!settled) this.s.notifier.releaseClaim(waiting.map((n) => n.id));
 			}
 			if (r.error && !r.text) for (const n of notes) noteToConcierge(this.s, n);
 			const out = r.error && !r.text ? `Something went wrong on my side (${r.error.slice(0, 200)}). Try again in a bit.` : r.text;

@@ -1,10 +1,11 @@
 // An optional sandbox for the agent's shell: bubblewrap runs every bash command with a read-only
-// root, vigil's own state hidden, SSH and GPG keys hidden, and only the session's own directories
-// writable. This turns the gate's credential rules from regexes on command text into a real
-// boundary. Network stays on: workers need it, and outward actions still go through approvals.
+// root, vigil's own state and the usual credential stores hidden, and only the session's own
+// directories writable. For the paths it hides, the gate's credential rules stop depending on
+// regexes over command text. Network stays on: workers need it, and outward actions still go
+// through approvals. GitHub CLI's login stays visible so workers can use gh.
 
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { BashSpawnHook } from "@earendil-works/pi-coding-agent";
@@ -51,12 +52,20 @@ export interface SandboxSpec {
 /** The bubblewrap arguments for a spec, in mount order (later mounts cover earlier ones). */
 export function bwrapArgs(spec: SandboxSpec, cwd: string): string[] {
 	const args = ["--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--unshare-pid", "--unshare-ipc", "--die-with-parent"];
-	const hide = [spec.home, join(homedir(), ".ssh"), join(homedir(), ".gnupg"), join(homedir(), ".pi")].filter(existsSync);
+	// vigil's state and the usual credential stores. GitHub CLI's config stays visible: workers need
+	// `gh`, and pushes are approval-gated anyway.
+	const hide = [
+		spec.home,
+		...[".ssh", ".gnupg", ".pi", ".aws", ".azure", ".kube", ".docker", ".netrc", ".git-credentials", ".npmrc", ".pypirc", ".config/gcloud", ".local/share/signal-cli"].map((d) => join(homedir(), d)),
+	].filter(existsSync);
 	const under = (p: string) => hide.some((h) => p === h || p.startsWith(`${h}/`));
 	// 1. Writable places outside the hidden ones (such as /tmp, which may contain vigil's home).
 	for (const w of spec.writable) if (existsSync(w) && !under(w)) args.push("--bind", w, w);
 	// 2. Hide, after those binds, so a writable parent cannot expose a hidden child.
-	for (const h of hide) args.push("--tmpfs", h);
+	for (const h of hide) {
+		if (statSync(h).isDirectory()) args.push("--tmpfs", h);
+		else args.push("--ro-bind", "/dev/null", h);
+	}
 	// 3. Re-expose what the agent may see or write inside the hidden places.
 	for (const r of spec.readable ?? []) if (existsSync(r) && under(r)) args.push("--ro-bind", r, r);
 	for (const w of spec.writable) if (existsSync(w) && under(w)) args.push("--bind", w, w);

@@ -363,3 +363,16 @@ describe("remove", () => {
 		expect(s.list().map((j) => j.id)).toEqual([sys.id]);
 	});
 });
+
+describe("second audit: built-in jobs switched back on", () => {
+	it("ensure() re-enables a disabled built-in job with an unchanged spec", async () => {
+		const { Db } = await import("../src/store/db.ts");
+		const { Scheduler } = await import("../src/core/scheduler.ts");
+		const { ManualClock } = await import("../src/core/time.ts");
+		const db = new Db(":memory:");
+		const sch = new Scheduler(db, new ManualClock(), () => "UTC");
+		const j = sch.ensure({ name: "heartbeat", kind: "every", spec: "60", prompt: "built in", action: "agent" });
+		sch.setEnabled(j.id, false);
+		expect(sch.ensure({ name: "heartbeat", kind: "every", spec: "60", prompt: "built in", action: "agent" }).enabled).toBe(1);
+	});
+});

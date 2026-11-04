@@ -335,7 +335,12 @@ export class Daemon {
 					const ref = `${job.id}:${run.slot}`;
 					const already = s.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM outbox WHERE ref_kind = 'notice' AND ref_id = ?", ref)?.n ?? 0;
 					const route = s.ownerRoute();
-					if (route && !already) s.outbox.enqueue({ ...route, text: `⏰ ${job.prompt}`, ref: { kind: "notice", id: ref } });
+					if (!already && route) s.outbox.enqueue({ ...route, text: `⏰ ${job.prompt}`, ref: { kind: "notice", id: ref } });
+					else if (!already) {
+						// No channel right now: keep it where the panel, /digest and the next reply show it.
+						s.notifier.notify({ urgency: "high", topic: "reminder", text: `⏰ ${job.prompt}`, dedupKey: ref });
+						return finish("no channel: kept for the digest");
+					}
 					return finish("reminded");
 				}
 				case "ticket": {
@@ -476,7 +481,12 @@ export class Daemon {
 			return;
 		}
 		if (!isOwner(s.cfg, msg.channel, msg.senderId)) {
-			s.db.event("gate.dropped", `${msg.channel} message from non-owner ${msg.senderId} (${msg.senderName ?? "?"})`);
+			// One log line per stranger per hour: a flood must not fill the database.
+			const key = `${msg.channel}:${msg.senderId}`;
+			if ((this.droppedAt.get(key) ?? 0) < s.clock.now() - 3_600_000) {
+				this.droppedAt.set(key, s.clock.now());
+				s.db.event("gate.dropped", `${msg.channel} message from non-owner ${msg.senderId} (${msg.senderName ?? "?"})`);
+			}
 			done("dropped", "not the owner");
 			return;
 		}
@@ -596,6 +606,7 @@ export class Daemon {
 	}
 
 	private readonly pairFailures = new Map<ChannelId, number>();
+	private readonly droppedAt = new Map<string, number>();
 
 	/**
 	 * Print a pairing code for every chat channel that has no owner yet: 10 random base32

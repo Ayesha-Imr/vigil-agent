@@ -271,8 +271,7 @@ async function start(p: Paths, opts: { cli: boolean }): Promise<Daemon> {
 }
 
 /** With the service running, `vigil chat` talks to it over the local HTTP API instead. */
-async function attachChat(p: Paths): Promise<void> {
-	const cfg = loadConfig(p);
+async function attachChat(cfg: VigilConfig): Promise<void> {
 	const http = cfg.channels.http;
 	if (!http?.token) throw new Error("vigil is already running and has no HTTP token configured, so chat cannot attach to it. Stop the service or set channels.http.token.");
 	console.log(`attached to the running vigil on 127.0.0.1:${http.port}. Ctrl-D to leave.`);
@@ -374,14 +373,17 @@ async function main(): Promise<void> {
 		case "start":
 			await start(p, { cli: false });
 			return;
-		case "chat":
+		case "chat": {
+			// Read the config (with environment secrets) before start() scrubs them, for attaching.
+			const cfg = loadConfig(p);
 			try {
 				await start(p, { cli: true });
 			} catch (err) {
 				if (!/already running/.test((err as Error).message)) throw err;
-				await attachChat(p);
+				await attachChat(cfg);
 			}
 			return;
+		}
 		case "status":
 			return status(p);
 		case "doctor":

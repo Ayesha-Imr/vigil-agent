@@ -120,7 +120,8 @@ export class Scheduler {
 	ensure(input: { name: string; kind: JobKind; spec: string; prompt: string; action: JobAction }): Job {
 		const existing = this.db.get<Job>("SELECT * FROM jobs WHERE name = ? AND created_by = 'system'", input.name);
 		if (!existing) return this.create({ ...input, createdBy: "system" });
-		if (existing.spec !== input.spec || existing.kind !== input.kind || existing.prompt !== input.prompt || existing.action !== input.action) {
+		// Also when it was switched off earlier (heartbeatMinutes 0, then back to 60).
+		if (!existing.enabled || existing.spec !== input.spec || existing.kind !== input.kind || existing.prompt !== input.prompt || existing.action !== input.action) {
 			const next = nextRunAt(input.kind, input.spec, this.clock.now(), this.tz());
 			this.db.run(
 				"UPDATE jobs SET kind = ?, spec = ?, prompt = ?, action = ?, next_run_at = ?, enabled = 1 WHERE id = ?",
