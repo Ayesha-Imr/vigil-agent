@@ -174,6 +174,9 @@ function isApiErrorLike(err: unknown): boolean {
 export function fromMessage(m: Message): InboundMessage | undefined {
 	const from = m.from;
 	if (!from || from.is_bot) return undefined;
+	// Private chats only: in a group, vigil's replies (which can draw on the owner's memory) would be
+	// read by everyone in it.
+	if (m.chat.type !== "private") return undefined;
 	const parts: string[] = [];
 	const body = m.text ?? m.caption;
 	if (body) parts.push(body);
@@ -207,6 +210,7 @@ export function fromMessage(m: Message): InboundMessage | undefined {
 export function fromCallback(q: CallbackQuery): InboundMessage | undefined {
 	if (q.data === undefined) return undefined;
 	const message = q.message;
+	if (message && message.chat.type !== "private") return undefined;
 	const chat = message ? message.chat.id : q.from.id;
 	let label: string | undefined;
 	if (message && "reply_markup" in message) {
@@ -228,7 +232,7 @@ export function fromCallback(q: CallbackQuery): InboundMessage | undefined {
 
 /** Map a reaction change to an InboundMessage for the newly added emoji, if any. */
 export function fromReaction(r: MessageReactionUpdated): InboundMessage | undefined {
-	if (!r.user || r.user.is_bot) return undefined;
+	if (!r.user || r.user.is_bot || r.chat.type !== "private") return undefined;
 	const old = new Set(r.old_reaction.map(reactionKey));
 	const added = r.new_reaction.map(reactionKey).find((k) => !old.has(k));
 	if (!added) return undefined;

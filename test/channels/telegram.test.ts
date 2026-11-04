@@ -70,3 +70,13 @@ describe("parseRef", () => {
 		expect(parseRef("nope")).toBeUndefined();
 	});
 });
+
+describe("private chats only", () => {
+	it("ignores messages, buttons and reactions in groups", () => {
+		const group = { id: -100123, type: "supergroup", title: "team" };
+		const user = { id: 42, is_bot: false, first_name: "A" };
+		expect(fromMessage({ message_id: 1, date: 1_700_000_000, chat: group, from: user, text: "hi" } as unknown as Message)).toBeUndefined();
+		expect(fromCallback({ id: "q", from: user, chat_instance: "c", data: "approve:x", message: { message_id: 2, date: 0, chat: group } } as unknown as Parameters<typeof fromCallback>[0])).toBeUndefined();
+		expect(fromReaction({ chat: group, message_id: 3, user, date: 0, old_reaction: [], new_reaction: [{ type: "emoji", emoji: "👎" }] } as unknown as Parameters<typeof fromReaction>[0])).toBeUndefined();
+	});
+});
