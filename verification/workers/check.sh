@@ -8,9 +8,15 @@
 set -u
 DEEP=${DEEP:-0}; [ "${1:-}" = "--deep" ] && DEEP=1
 cd "$(dirname "$0")"
-JAR=${TLA2TOOLS_JAR:-}
+JAR=${TLA2TOOLS_JAR:-${TLA2TOOLS:-}}
 for c in "$JAR" /home/user/tools/tla2tools.jar "$HOME/tools/tla2tools.jar"; do [ -n "$c" ] && [ -f "$c" ] && JAR=$c && break; done
+# Else the pinned, checksummed TLC that verification/lib.sh downloads (as CI does).
+if [ ! -f "$JAR" ]; then
+  . "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib.sh"
+  JAR=$(find_jar) || exit 2
+fi
 [ -f "$JAR" ] || { echo "FAIL: tla2tools.jar not found (set TLA2TOOLS_JAR)"; exit 2; }
+TE=$(java -cp "$JAR" tlc2.TLC -help 2>&1 | grep -q noGenerateSpecTE && echo -noGenerateSpecTE)  # nightlies only; 1.7.4 does not write trace specs anyway
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 bad=0
 JOBS=${JOBS:-$(nproc 2>/dev/null || echo 2)}
@@ -26,7 +32,7 @@ run_one() {
   if [ -n "$spec" ]; then sed "s/^SPECIFICATION .*/SPECIFICATION $spec/" "$cfg" > "$TMP/c$i.cfg"; cfg=$TMP/c$i.cfg; fi
   local out got states
   out=$(java -XX:+UseParallelGC -DTLA-Library="$PWD" -cp "$JAR" tlc2.TLC -workers "$w" -cleanup \
-        -noGenerateSpecTE -metadir "$TMP/meta$i" "$tla" -config "$cfg" 2>&1)
+        ${TE:-} -metadir "$TMP/meta$i" "$tla" -config "$cfg" 2>&1)
   if grep -q "No error has been found" <<<"$out"; then got=pass
   elif v=$(grep -oE "Invariant [A-Za-z0-9_]+ is violated" <<<"$out" | head -1) && [ -n "$v" ]; then got="inv $(awk '{print $2}' <<<"$v")"
   elif v=$(grep -oE "Temporal property [A-Za-z0-9_]+ was violated" <<<"$out" | head -1) && [ -n "$v" ]; then got="temporal $(awk '{print $3}' <<<"$v")"

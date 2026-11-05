@@ -9,7 +9,13 @@
 set -u
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 JAR="${TLA2TOOLS:-/home/user/tools/tla2tools.jar}"
+# Else the pinned, checksummed TLC that verification/lib.sh downloads (as CI does).
+if [ ! -f "$JAR" ]; then
+	. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib.sh"
+	JAR=$(find_jar) || exit 1
+fi
 [ -f "$JAR" ] || { echo "FAIL tla2tools.jar not found at $JAR (set TLA2TOOLS)"; exit 1; }
+TE=$(java -cp "$JAR" tlc2.TLC -help 2>&1 | grep -q noGenerateSpecTE && echo -noGenerateSpecTE)  # nightlies only; 1.7.4 does not write trace specs anyway
 command -v java >/dev/null || { echo "FAIL java not on PATH"; exit 1; }
 META="$(mktemp -d)"; trap 'rm -rf "$META"' EXIT
 bad=0
@@ -20,7 +26,7 @@ LIMIT=()
 command -v timeout >/dev/null && LIMIT=(timeout "${OUTBOX_TLC_TIMEOUT:-300}")
 tlc() { # spec-dir spec cfg -> TLC output
 	( cd "$1" && "${LIMIT[@]}" java -XX:+UseParallelGC -DTLA-Library="$DIR" -cp "$JAR" tlc2.TLC -workers auto -cleanup \
-		-noGenerateSpecTE -metadir "$META/$(basename "$3" .cfg)" -config "$3" "$2" 2>&1 )
+		${TE:-} -metadir "$META/$(basename "$3" .cfg)" -config "$3" "$2" 2>&1 )
 }
 states() { grep -Eo '[0-9,]+ distinct states found' <<<"$1" | tail -1 | cut -d' ' -f1; }
 
@@ -51,7 +57,7 @@ if [ "${1:-}" = "--trace" ]; then
 	cfg="$(cd "$DIR" && realpath "${2:?give a .cfg path relative to verification/outbox}")"
 	spec="$DIR/Outbox.tla"; [ "$(basename "$(dirname "$cfg")")" = mutants ] && spec="${cfg%.cfg}.tla"
 	( cd "$(dirname "$spec")" && java -XX:+UseParallelGC -DTLA-Library="$DIR" -cp "$JAR" tlc2.TLC -workers 1 \
-		-cleanup -noGenerateSpecTE -metadir "$META/trace" -config "$cfg" "$(basename "$spec")" 2>&1 ) |
+		-cleanup ${TE:-} -metadir "$META/trace" -config "$cfg" "$(basename "$spec")" 2>&1 ) |
 		sed -n '/is violated\|was violated/,/states generated/p' |
 		awk '/^(\/\\ |State [0-9]+|Error|Back to state|[0-9]+ states generated)/ { if (buf != "") print buf; buf = $0; next }
 		     { sub(/^ +/, " "); buf = buf $0 } END { if (buf != "") print buf }' |
