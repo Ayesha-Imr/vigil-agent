@@ -47,7 +47,7 @@ state space explode shows up instead of hanging. Expected today, all `PASS`:
   (liveness, 71,014), `fixed/TwoDaemonsLocked.cfg` (505), `fixed/ApprovalAskInOrder.cfg` (539),
   `fixed/HelperApprovalInOrder.cfg` (539), `fixed/StaleTakeoverStopsSending.cfg` (1,839).
   `--deep` adds `OutboxDeep.cfg` (1,656,967), `OutboxDeepRows.cfg` (2,598,494),
-  `OutboxLiveDeep.cfg` (193,181) (last run at 42caa19; not rerun at the sync commit).
+  `OutboxLiveDeep.cfg` (193,181); all pass at the sync commit (about 3 min on 4 cores).
 - twelve mutants, each violating its own property (see "Mutants").
 - no open findings; eight characterizations still show their violation. For these, `PASS`
   means "still reproduced", not "fine".
