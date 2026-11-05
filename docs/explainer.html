@@ -104,7 +104,7 @@ footer{margin-top:64px;padding-top:18px;border-top:1px solid var(--line);font-si
       <tr><td>Every notice ends up sent, dropped or expired, never lost</td><td class="c yes">✓</td><td class="c yes">✓</td><td class="c">—</td></tr>
     </tbody>
   </table></div>
-  <p class="muted" style="margin-top:10px;font-size:14px">The same method covers approvals, the outbox, the scheduler and the worker pool. Each property was first shown to fail on a deliberately broken variant, so a pass means something.</p>
+  <p class="muted" style="margin-top:10px;font-size:14px">The same method covers approvals, the outbox, the scheduler and the worker pool: five TLA+ models, and 60 deliberately broken variants that each make a property fail, so a pass means something. The model checker found 19 real defects in the code (a notice told twice, an approval reachable over the HTTP API, a lost reminder after a crash, messages out of order); each was replayed on the real code, fixed, and kept as a regression check.</p>
 
   <h2>What happens to a message</h2>
 <pre class="mermaid">
@@ -132,12 +132,12 @@ flowchart LR
   </div>
 
   <h2>Where it lives</h2>
-  <p>Telegram, Discord, WhatsApp (opt-in, unofficial), ntfy push, an HTTP endpoint for iOS Shortcuts, and a terminal, all in one conversation. Models: your ChatGPT plan through Codex (device-code login, even from your phone) and OpenCode Go, with fallback between them. From your laptop, the pi package lets any pi session hand work to vigil or ping your phone when a long run finishes.</p>
+  <p>Telegram, Discord, Slack, Signal, WhatsApp (opt-in, unofficial), ntfy push, an HTTP endpoint for iOS Shortcuts, and a terminal, all in one conversation. Models: your ChatGPT plan through Codex (device-code login, even from your phone) and OpenCode Go, with fallback between them. From your laptop, the pi package lets any pi session hand work to vigil or ping your phone when a long run finishes.</p>
 
   <h2>Start</h2>
   <pre class="cmd"><code>git clone https://github.com/Ayesha-Imr/vigil-agent &amp;&amp; cd vigil-agent &amp;&amp; npm ci --ignore-scripts &amp;&amp; npm run build &amp;&amp; npm link</code><button type="button" data-copy>Copy</button></pre>
   <pre class="cmd"><code>vigil init &amp;&amp; vigil login codex &amp;&amp; vigil start</code><button type="button" data-copy>Copy</button></pre>
-  <p class="muted" style="font-size:15px">Then send the <span class="inline">/pair</span> code from the log to your Telegram bot. <span class="inline">vigil simulate</span> replays your own week of notices under a different policy before you change it.</p>
+  <p class="muted" style="font-size:15px">To see it work first, with no accounts: <span class="inline">vigil demo</span> plays a scripted day through the real daemon. Then send the <span class="inline">/pair</span> code from the log to your Telegram bot. <span class="inline">vigil simulate</span> replays your own week of notices under a different policy before you change it.</p>
 
   <footer>
     Domain model adapted from DeepSeek's <a href="https://github.com/deepseek-ai/dsh-superagent-prototype">dsh-superagent</a>. Verification method and skills from <a href="https://github.com/cursor/plugins/tree/main/pstack">pstack</a>. Agent harness: <a href="https://github.com/earendil-works/pi">pi</a>. Source: <a href="https://github.com/Ayesha-Imr/vigil-agent">github.com/Ayesha-Imr/vigil-agent</a> · MIT.
