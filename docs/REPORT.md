@@ -159,6 +159,11 @@ Defects found by the tests, the model checker and a code audit, and fixed:
 | Workers | A clean shutdown during a worker turn reported the ticket failed, so it was never recovered | third review |
 | Config | `BRAVE_API_KEY` from the environment was written to config.json on save | third review |
 | SSRF | The address check ran before the fetch's own DNS lookup (a rebinding window) | second audit, closed later |
+| Gate | `/mode auto` and `/login` over the HTTP API passed the refusal that covered the panel's buttons | third audit |
+| Channels | A stranger's Signal/WhatsApp display name put terminal escape codes into `vigil status` | third audit |
+| Channels | Every stranger message was stored in full, forever (a disk-filling flood) | third audit |
+| Channels | A forwarded Telegram/WhatsApp message arrived as the owner's own instruction | third audit |
+| HTTP API | The whole request body was read before the token was checked | third audit |
 | Concierge | Notices handed to a reply were marked delivered even if the reply failed | audit |
 | Tickets | Follow-ups addressed by a ticket's short name were silently lost | audit |
 | HTTP API | Concurrent requests could receive each other's replies | audit |

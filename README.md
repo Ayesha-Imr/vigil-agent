@@ -366,12 +366,15 @@ verification skills, so they can do the same for your code.
 
 - vigil runs commands as the user it runs as. Give it its own user, or a container, and don't run
   it as root.
-- Only owner identities can talk to it. Messages, web pages, files and tool output are treated as
-  data, and they can't widen permissions: the gate, the allowlist and the governor are code.
-- **Approvals come from your chat app**, where your identity is checked. Approve/deny presses over
-  the HTTP API (panel, ntfy actions) are refused by default, because any process on the machine
-  that finds the token could press them, and that includes the agent's own tools. Set
-  `channels.http.allowApprovals` only if tools can't read vigil's files (a sandbox or container).
+- Only owner identities can talk to it; anyone else's messages are dropped before anything is
+  stored. Messages, web pages, files and tool output are treated as data, and they can't widen
+  permissions: the gate, the allowlist and the governor are code. A message you forward is marked
+  as someone else's words, so it is data too.
+- **Approvals come from your chat app**, where your identity is checked. Over the HTTP API (panel,
+  ntfy actions, `/api/message`), approve/deny, typed `/approve`, `/mode` and `/login` are refused
+  by default, because any process on the machine that finds the token could send them, and that
+  includes the agent's own tools. Set `channels.http.allowApprovals` only if tools can't read
+  vigil's files (a sandbox or container).
 - vigil's own config, policy, credentials and transcripts are off limits to every tool, ahead of
   any rule you add. File tools are checked by where a path really leads (relative paths, `..` and
   symlinks included), not by how it is spelled. Secret environment variables are removed from the process after startup, so
