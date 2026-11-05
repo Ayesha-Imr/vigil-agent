@@ -216,7 +216,7 @@ async function doctor(p: Paths): Promise<void> {
 	const ids = cfg.owner.identities;
 	ok(Object.values(ids).some((v) => v && v.length), "an owner identity is set", "vigil init, or set owner.identities in config.json");
 	const channels = createChannels(cfg, p, { log: (l) => console.log(`  ${l}`) });
-	ok([...channels.keys()].some((c) => c !== "http"), `channels: ${[...channels.keys()].join(", ") || "none"}`, "configure Telegram, Discord, WhatsApp or ntfy");
+	ok([...channels.keys()].some((c) => c !== "http"), `channels: ${[...channels.keys()].join(", ") || "none"}`, "configure Telegram, Discord, Slack, Signal, WhatsApp or ntfy (vigil init)");
 	const runtime = await runtimeFor(p);
 	const router = new ModelRouter(runtime, () => cfg.models, systemClock);
 	await router.refresh();

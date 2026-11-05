@@ -70,7 +70,7 @@ export function dynamicVars(s: Services): Record<string, string> {
 export async function buildSession(s: Services, spec: SessionSpec): Promise<Built> {
 	const model = spec.model ?? s.models.pick(spec.role);
 	if (!model) {
-		throw new Error(`no model with credentials for role "${spec.role}". Run \`vigil login\` (Codex) or set OPENCODE_API_KEY (OpenCode Go).`);
+		throw new Error(`no model with credentials for role "${spec.role}". Send /login codex (ChatGPT) or /login opencode <key> (OpenCode Go), or run \`vigil login codex\` on the server.`);
 	}
 	mkdirSync(spec.cwd, { recursive: true });
 
