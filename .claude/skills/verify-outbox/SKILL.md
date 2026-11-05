@@ -95,6 +95,15 @@ delivering. See verification/README.md, "Trace validation of the outbox".
 
 ## Does my change touch this?
 
+**Known drift (do this first).** Since the sync commit below, three covered changes landed and the
+model has not been updated for them: 06d3da0 (F2d fix: `deliverDue` re-checks `mayDeliver()`
+before each row; `lockHolderAlive` asks `ps` where there is no /proc), 2fed3cb (F1c fix: delegate
+helpers pass `ticketId` and the ticket's approval route) and fdcacea (F3 fix: the retry backoff
+counts from `this.clock.now()` after the send). The checks still pass, but F1c and F2d are listed
+below as open when they are fixed. Resync: model the per-row re-check and the ps liveness, turn
+F1c and F2d into fixed regression configs with mutants that revert each fix, characterize what
+remains of F2d (one send in flight across a suspend), then set a new sync commit.
+
 Coverage record. Sync commit: `42caa19bab6b7e27ecd57e1b6057531d94dbb08b` (the commit at
 which the model was last confirmed to describe the code below; every channel, including
 Slack and Signal, is the same abstract `Channel.send` to the model).
