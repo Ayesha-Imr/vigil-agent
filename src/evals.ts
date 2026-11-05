@@ -67,7 +67,8 @@ export const SCENARIOS: Scenario[] = [
 	{
 		name: "reminder",
 		what: "a plain reminder becomes a scheduled job, not a promise in text",
-		run: (c) => c.ch.say("remind me to drink water at 17:30 today"),
+		// Relative, so the scenario never asks for a time that has already passed today.
+		run: (c) => c.ch.say("remind me to drink water in two hours"),
 		check: (c) => {
 			const jobs = c.d.s.scheduler.list().filter((j) => j.created_by === "owner");
 			if (!jobs.length) return "no job was scheduled";
