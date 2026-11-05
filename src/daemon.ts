@@ -753,6 +753,12 @@ export class Daemon {
 					say(`${cmd} <approval id>, as shown in the request.`);
 					return true;
 				}
+				// Same rule as the buttons: an HTTP token is not the owner's word (review finding).
+				if ((to.channel === "http" || to.channel === "ntfy") && !s.cfg.channels.http?.allowApprovals) {
+					s.db.event("gate.http-approval-refused", `refused typed ${cmd} over ${to.channel}; approve from a chat app or set channels.http.allowApprovals`);
+					say("Approvals over the HTTP API are off. Use a chat app, or set channels.http.allowApprovals.");
+					return true;
+				}
 				this.handleButton(`${cmd.slice(1).toLowerCase()}:${args[0]}`, say);
 				return true;
 			}

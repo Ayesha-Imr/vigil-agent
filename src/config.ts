@@ -164,6 +164,7 @@ export function loadConfig(p: Paths = paths()): VigilConfig {
 		["VIGIL_SLACK_APP_TOKEN", "channels.slack.appToken"],
 		["VIGIL_HTTP_TOKEN", "channels.http.token"],
 		["VIGIL_NTFY_TOKEN", "channels.ntfy.token"],
+		["BRAVE_API_KEY", "search.apiKey"],
 	] as const) {
 		const v = env[k];
 		if (v) fromEnv.set(path, v);
@@ -199,10 +200,13 @@ const fromEnv = new Map<string, string>();
 
 export function saveConfig(cfg: VigilConfig, p: Paths = paths()): void {
 	mkdirSync(p.home, { recursive: true });
-	const copy = structuredClone(cfg) as unknown as Record<string, Record<string, Record<string, unknown>>>;
+	const copy = structuredClone(cfg) as unknown as Record<string, unknown>;
 	for (const [path, value] of fromEnv) {
-		const [a, b, c] = path.split(".");
-		if (copy[a]?.[b]?.[c] === value) delete copy[a][b][c];
+		const keys = path.split(".");
+		const last = keys.pop()!;
+		let at: Record<string, unknown> | undefined = copy;
+		for (const k of keys) at = at?.[k] as Record<string, unknown> | undefined;
+		if (at?.[last] === value) delete at[last];
 	}
 	writeFileSync(p.config, `${JSON.stringify(copy, null, 2)}\n`, { mode: 0o600 });
 }

@@ -150,6 +150,8 @@ export class WorkerPool {
 			}, limit);
 			timer.unref?.();
 			const r = await promptWithFallback(this.s, session, "worker", text).finally(() => clearTimeout(timer));
+			// Shutdown aborted this turn: leave the ticket "working" so recover() picks it up on restart.
+			if (this.stopping) return true;
 			const persisted = session.sessionFile !== undefined && existsSync(session.sessionFile);
 			if (persisted) this.s.tickets.setSessionFile(t.id, session.sessionFile!);
 			if (timedOut || r.error) {
