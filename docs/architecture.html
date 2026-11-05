@@ -4,46 +4,50 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
-/* Layout: one reading column, with wide diagram plates that break out of it. A night-watch
-   palette: cool ink and slate, one lamp-amber accent for "this reaches you". */
+/* Layout: one reading column, with wide diagram plates that break out of it.
+   Palette: a night watchman's lamp. Bottle-green dark, brass for "this reaches you",
+   coral for alarms, sea-glass for the calm machinery. Light mode is the same lamp by day. */
 :root {
-  --bg: #F1F3F6;
-  --surface: #FFFFFF;
-  --ink: #142030;
-  --muted: #586779;
-  --line: #D3DAE2;
-  --accent: #A35E00;
-  --accent-soft: #F7E8CF;
-  --calm: #2D6A89;
-  --calm-soft: #DDEBF2;
+  --bg: #EDF1EA;
+  --surface: #FBFCF8;
+  --ink: #0F2621;
+  --muted: #536A62;
+  --line: #CBD7CD;
+  --accent: #946A0E;
+  --accent-soft: #F3E6C4;
+  --calm: #1D6F68;
+  --calm-soft: #D6E8E3;
   --ok: #2B7A4B;
-  --bad: #B3261E;
-  --night: #E2E7EF;
+  --bad: #C2452D;
+  --night: #DCE5DD;
+  --glow: rgba(214, 160, 46, 0.22);
   --display: "Familjen Grotesk", "Helvetica Neue", Arial, sans-serif;
   --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #0C131C; --surface: #131D29; --ink: #E5EBF1; --muted: #93A1B2; --line: #263445;
-    --accent: #F0B24C; --accent-soft: #3A2B12; --calm: #73B5D8; --calm-soft: #16303F;
-    --ok: #5CC48A; --bad: #F06A5F; --night: #18232F; color-scheme: dark;
+    --bg: #0B1D19; --surface: #112A24; --ink: #ECF1E6; --muted: #92AA9F; --line: #24413A;
+    --accent: #E7B44E; --accent-soft: #3A2E12; --calm: #6CC3B6; --calm-soft: #143A34;
+    --ok: #6CCB8E; --bad: #FF7A5C; --night: #081613; --glow: rgba(231, 180, 78, 0.16); color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
-  --bg: #0C131C; --surface: #131D29; --ink: #E5EBF1; --muted: #93A1B2; --line: #263445;
-  --accent: #F0B24C; --accent-soft: #3A2B12; --calm: #73B5D8; --calm-soft: #16303F;
-  --ok: #5CC48A; --bad: #F06A5F; --night: #18232F; color-scheme: dark;
+  --bg: #0B1D19; --surface: #112A24; --ink: #ECF1E6; --muted: #92AA9F; --line: #24413A;
+  --accent: #E7B44E; --accent-soft: #3A2E12; --calm: #6CC3B6; --calm-soft: #143A34;
+  --ok: #6CCB8E; --bad: #FF7A5C; --night: #081613; --glow: rgba(231, 180, 78, 0.16); color-scheme: dark;
 }
 * { box-sizing: border-box; }
-body { background: var(--bg); color: var(--ink); font: 400 16px/1.6 var(--body); }
+body { background: radial-gradient(900px 520px at 12% -6%, var(--glow), transparent 70%), var(--bg); background-repeat: no-repeat; background-color: var(--bg); color: var(--ink); font: 400 16px/1.6 var(--body); }
 .wrap { max-width: 1080px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 40px 64px; display: grid; gap: 56px; }
 h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; line-height: 1.15; }
 h1 { font-size: clamp(40px, 7vw, 68px); font-weight: 700; letter-spacing: -0.02em; }
 h2 { font-size: clamp(26px, 3.4vw, 34px); font-weight: 600; letter-spacing: -0.01em; }
 h3 { font-size: 18px; font-weight: 600; }
 p { margin: 0; max-width: 66ch; }
-.eyebrow { font: 500 12px/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.eyebrow { font: 500 12px/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); }
+h1 .lamp { color: var(--accent); }
+.hero .eyebrow::before { content: "●"; margin-right: 8px; color: var(--accent); text-shadow: 0 0 10px var(--accent); }
 .lede { font-size: 19px; color: var(--muted); max-width: 60ch; }
 section { display: grid; gap: 18px; }
 .mono { font-family: var(--mono); font-size: 0.92em; }
@@ -166,7 +170,7 @@ footer a, a { color: var(--calm); }
 
 <header class="hero">
   <span class="eyebrow">vigil · how it works</span>
-  <h1>An agent that keeps watch, and knows when to stay quiet.</h1>
+  <h1>An agent that keeps watch, and knows when to <span class="lamp">stay quiet.</span></h1>
   <p class="lede">vigil runs on a small server, all the time. You talk to it from the chat apps on your phone; it works in the background, and it interrupts you only when it is worth it. Every rule about <em>when</em> it may interrupt you is enforced by code and checked by a model checker, not left to a prompt.</p>
   <div class="tag">
     <span class="chip hot">built on pi</span>
