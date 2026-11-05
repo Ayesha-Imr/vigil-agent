@@ -130,6 +130,10 @@ Defects found by the tests, the model checker and a code audit, and fixed:
 | Scheduler | A replayed slot marked its job running with no run to complete it (held for 6 h) | unit tests |
 | Governor | Digest times in a skipped DST hour never fired; in a repeated hour they fired twice | audit, then tests |
 | Workers | Stopping the daemon left helper sessions running and writing after the database closed | writing the F1c regression test |
+| Gate | A typed `/approve <id>` over the HTTP API bypassed the refusal that covered approve buttons | third review |
+| Workers | A clean shutdown during a worker turn reported the ticket failed, so it was never recovered | third review |
+| Config | `BRAVE_API_KEY` from the environment was written to config.json on save | third review |
+| SSRF | The address check ran before the fetch's own DNS lookup (a rebinding window) | second audit, closed later |
 | Concierge | Notices handed to a reply were marked delivered even if the reply failed | audit |
 | Tickets | Follow-ups addressed by a ticket's short name were silently lost | audit |
 | HTTP API | Concurrent requests could receive each other's replies | audit |
