@@ -2,52 +2,50 @@
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;0,8..60,600;1,8..60,400;1,8..60,500&family=Hanken+Grotesk:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
-/* Layout: one reading column, with wide diagram plates that break out of it.
-   Palette: a night watchman's lamp. Bottle-green dark, brass for "this reaches you",
-   coral for alarms, sea-glass for the calm machinery. Light mode is the same lamp by day. */
+/* Layout: one reading column with wide plates. Palette and type in the spirit of Anthropic's
+   own: warm ivory paper, near-black ink, clay orange for what reaches you, olive and oat for
+   the quiet machinery; a book serif for headings over a plain grotesque. */
 :root {
-  --bg: #EDF1EA;
-  --surface: #FBFCF8;
-  --ink: #0F2621;
-  --muted: #536A62;
-  --line: #CBD7CD;
-  --accent: #946A0E;
-  --accent-soft: #F3E6C4;
-  --calm: #1D6F68;
-  --calm-soft: #D6E8E3;
-  --ok: #2B7A4B;
-  --bad: #C2452D;
-  --night: #DCE5DD;
-  --glow: rgba(214, 160, 46, 0.22);
-  --display: "Familjen Grotesk", "Helvetica Neue", Arial, sans-serif;
-  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --bg: #F5F4EE;
+  --surface: #FFFFFF;
+  --ink: #1F1E1B;
+  --muted: #6E6B62;
+  --line: #E3DFD3;
+  --accent: #C15F3C;
+  --accent-soft: #F6E4DB;
+  --calm: #5E7148;
+  --calm-soft: #ECEADF;
+  --ok: #5E7148;
+  --bad: #B5443A;
+  --night: #ECE8DC;
+  --display: "Source Serif 4", "Iowan Old Style", Georgia, serif;
+  --body: "Hanken Grotesk", "Helvetica Neue", Arial, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #0B1D19; --surface: #112A24; --ink: #ECF1E6; --muted: #92AA9F; --line: #24413A;
-    --accent: #E7B44E; --accent-soft: #3A2E12; --calm: #6CC3B6; --calm-soft: #143A34;
-    --ok: #6CCB8E; --bad: #FF7A5C; --night: #081613; --glow: rgba(231, 180, 78, 0.16); color-scheme: dark;
+    --bg: #1F1E1D; --surface: #2A2927; --ink: #F3F1EA; --muted: #A9A59A; --line: #3B3935;
+    --accent: #DE8A6A; --accent-soft: #43302A; --calm: #A8BA8E; --calm-soft: #33332D;
+    --ok: #A8BA8E; --bad: #E8776B; --night: #262523; color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
-  --bg: #0B1D19; --surface: #112A24; --ink: #ECF1E6; --muted: #92AA9F; --line: #24413A;
-  --accent: #E7B44E; --accent-soft: #3A2E12; --calm: #6CC3B6; --calm-soft: #143A34;
-  --ok: #6CCB8E; --bad: #FF7A5C; --night: #081613; --glow: rgba(231, 180, 78, 0.16); color-scheme: dark;
+  --bg: #1F1E1D; --surface: #2A2927; --ink: #F3F1EA; --muted: #A9A59A; --line: #3B3935;
+  --accent: #DE8A6A; --accent-soft: #43302A; --calm: #A8BA8E; --calm-soft: #33332D;
+  --ok: #A8BA8E; --bad: #E8776B; --night: #262523; color-scheme: dark;
 }
 * { box-sizing: border-box; }
-body { background: radial-gradient(900px 520px at 12% -6%, var(--glow), transparent 70%), var(--bg); background-repeat: no-repeat; background-color: var(--bg); color: var(--ink); font: 400 16px/1.6 var(--body); }
+body { background: var(--bg); color: var(--ink); font: 400 16.5px/1.6 var(--body); }
 .wrap { max-width: 1080px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 40px 64px; display: grid; gap: 56px; }
 h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; line-height: 1.15; }
-h1 { font-size: clamp(40px, 7vw, 68px); font-weight: 700; letter-spacing: -0.02em; }
-h2 { font-size: clamp(26px, 3.4vw, 34px); font-weight: 600; letter-spacing: -0.01em; }
-h3 { font-size: 18px; font-weight: 600; }
+h1 { font-size: clamp(40px, 7vw, 66px); font-weight: 500; letter-spacing: -0.015em; line-height: 1.08; }
+h2 { font-size: clamp(26px, 3.4vw, 36px); font-weight: 500; letter-spacing: -0.01em; }
+h3 { font-size: 19px; font-weight: 500; }
 p { margin: 0; max-width: 66ch; }
-.eyebrow { font: 500 12px/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); }
-h1 .lamp { color: var(--accent); }
-.hero .eyebrow::before { content: "●"; margin-right: 8px; color: var(--accent); text-shadow: 0 0 10px var(--accent); }
+.eyebrow { font: 500 12px/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+h1 .lamp { color: var(--accent); font-style: italic; }
 .lede { font-size: 19px; color: var(--muted); max-width: 60ch; }
 section { display: grid; gap: 18px; }
 .mono { font-family: var(--mono); font-size: 0.92em; }
@@ -55,16 +53,16 @@ code { font-family: var(--mono); font-size: 0.9em; background: var(--calm-soft);
 .hero { display: grid; gap: 18px; }
 .hero .tag { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip { font: 500 12px/1 var(--mono); padding: 6px 9px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); background: var(--surface); }
-.chip.hot { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.chip.hot { border-color: transparent; color: var(--accent); background: var(--accent-soft); }
 
 /* Plates: the wide visual blocks */
-.plate { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px; display: grid; gap: 14px; min-width: 0; }
+.plate { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 18px; display: grid; gap: 14px; min-width: 0; }
 .scroll { overflow-x: auto; min-width: 0; }
 
 /* Architecture SVG */
 #arch { width: 100%; min-width: 900px; height: auto; display: block; }
 #arch .node rect { fill: var(--surface); stroke: var(--line); stroke-width: 1.5; transition: opacity .2s, stroke .2s; }
-#arch .node .t { font: 600 15px var(--display); fill: var(--ink); }
+#arch .node .t { font: 500 16px var(--display); fill: var(--ink); }
 #arch .node .s { font: 400 11.5px var(--body); fill: var(--muted); }
 #arch .node { cursor: pointer; }
 #arch .node:hover rect, #arch .node:focus rect { stroke: var(--calm); }
@@ -85,14 +83,14 @@ code { font-family: var(--mono); font-size: 0.9em; background: var(--calm-soft);
 
 .tabs { display: flex; flex-wrap: wrap; gap: 8px; }
 .tabs button { font: 500 14px var(--body); color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 999px; padding: 8px 14px; cursor: pointer; }
-.tabs button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--ink); }
+.tabs button[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--bg); }
 .tabs button:focus-visible, .sim select:focus-visible, .sim input:focus-visible { outline: 2px solid var(--calm); outline-offset: 2px; }
 .split { display: grid; grid-template-columns: 1.15fr 1fr; gap: 18px; }
 .split > * { min-width: 0; }
 ol.steps { margin: 0; padding: 0; list-style: none; counter-reset: s; display: grid; gap: 10px; }
 ol.steps li { counter-increment: s; display: grid; grid-template-columns: 28px 1fr; gap: 10px; align-items: start; }
 ol.steps li::before { content: counter(s); font: 600 13px/26px var(--mono); text-align: center; width: 26px; height: 26px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); }
-.detail { border-left: 3px solid var(--calm); padding: 4px 0 4px 14px; display: grid; gap: 6px; }
+.detail { border-left: 2px solid var(--line); padding: 4px 0 4px 16px; display: grid; gap: 8px; align-content: start; }
 .detail .where { font: 400 12.5px var(--mono); color: var(--muted); }
 
 /* Governor simulator */
@@ -113,7 +111,7 @@ ol.steps li::before { content: counter(s); font: 600 13px/26px var(--mono); text
 .rules li.hit { background: var(--accent-soft); border-color: var(--accent); }
 .rules li.hit .out { color: var(--accent); }
 .verdict { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; padding-top: 6px; }
-.verdict b { font: 700 26px var(--display); }
+.verdict b { font: 500 28px var(--display); }
 .verdict.send b { color: var(--accent); }
 .verdict.wait b { color: var(--calm); }
 .verdict.drop b { color: var(--muted); }
@@ -184,7 +182,7 @@ footer a, a { color: var(--calm); }
 <section>
   <span class="eyebrow">01 · the map</span>
   <h2>Every part, and the paths between them</h2>
-  <p>Pick a journey to light up its path, or tap any box to see what it does and where it lives in the code. Amber marks the two places where something reaches you without being asked.</p>
+  <p>Pick a journey to light up its path, or tap any box to see what it does and where it lives in the code. Orange marks the places where something reaches you without being asked.</p>
   <div class="plate">
     <div class="tabs" role="group" aria-label="Journeys">
       <button type="button" data-j="all" aria-pressed="true">Everything</button>
