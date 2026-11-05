@@ -1,0 +1,11 @@
+spec: governor
+run: MCGovernor.tla
+config: Governor_concierge.cfg
+check: NoStaleDelivery
+kind: invariant
+code: src/core/governor.ts claim(): the `n.expiresAt <= now` test is gone, so a notice already past its expiry goes into the prompt and the reply
+@@@ old
+    /\ LET c == {m \in Notices : IsWaiting(m) /\ nt[m].expiresAt > now}
+@@@ new
+    /\ LET c == {m \in Notices : IsWaiting(m)}
+@@@ end

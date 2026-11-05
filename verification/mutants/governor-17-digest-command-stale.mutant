@@ -1,0 +1,11 @@
+spec: governor
+run: MCGovernor.tla
+config: Governor.cfg
+check: NoStaleDelivery
+kind: invariant
+code: src/core/governor.ts takeForReply(): the expire-first pass is gone, so /digest shows a notice past its expiry if no tick ran since (finding DigestCommandStale comes back)
+@@@ old
+    LET stale == {m \in Notices : IsWaiting(m) /\ nt[m].expiresAt <= now}
+@@@ new
+    LET stale == {}
+@@@ end

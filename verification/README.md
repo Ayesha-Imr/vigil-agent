@@ -2,8 +2,9 @@
 
 vigil promises the owner things that ordinary tests rarely reach, because the bad cases need an
 unlucky order of events: a digest tick while the concierge is thinking, a tap on a stale button
-after expiry, a mute in the middle of a turn. This folder model-checks those promises with
-TLA+ and TLC, which explores every order of steps in a small model of the code.
+after expiry, a mute in the middle of a turn, a typed command from the wrong place. This folder
+model-checks those promises with TLA+ and TLC, which explores every order of steps in a small
+model of the code.
 
 ```sh
 bash verification/run.sh                   # everything: governor, approvals, then the outbox,
@@ -16,95 +17,117 @@ bash verification/mutate.sh approvals-0    # mutants whose name starts with this
 ```
 
 Needs Java 11+. TLC comes from `$TLA2TOOLS`, or `verification/lib.sh` downloads the pinned TLC
-1.7.4 release once into `verification/.tools/` and checks its sha256. On 4 cores the governor
-and approvals checks take about 2 minutes; the other agents' checks add about 2.5 minutes.
+1.8.0 pre-release once into `verification/.tools/` and checks its sha256 (the build the models were
+checked with, 2026.11.03.180953; another build only warns). `run.sh` exports the jar it found as
+`TLA2TOOLS` and `TLA2TOOLS_JAR` for the other agents' `check.sh` scripts. The governor and approvals
+models also pass on TLC 1.7.4. On 4 cores the governor
+and approvals checks take about 2–3 minutes, and the other agents' checks add a few more.
+`run.sh` exits 0 when every required config and modeled fix passes and every finding reproduces
+as recorded.
 
 | Spec | Code | Verify skill |
 | --- | --- | --- |
-| `governor/` | src/core/governor.ts via notifier.ts, the concierge's peek/confirm, daemon /digest, /mute and tick | `.claude/skills/verify-attention-governor/` |
-| `approvals/` | src/core/approvals.ts, the gate in src/agent/gate.ts, `Daemon.route`/`handleButton`, `isOwner` | `.claude/skills/verify-approvals/` |
+| `governor/` | src/core/governor.ts via notifier.ts, the concierge's claim/reply/confirm, daemon /digest, /mute and tick, config limits | `.claude/skills/verify-attention-governor/` |
+| `approvals/` | src/core/approvals.ts, the gate in src/agent/gate.ts, `Daemon.route` (pairing, isOwner, HTTP refusal, typed /approve), `handleButton` | `.claude/skills/verify-approvals/` |
 | `outbox/`, `scheduler/`, `workers/` | written by other agents; `run.sh` calls their `check.sh` | their own skills |
 
-The verify skills (copied to `.pi/skills/` for pi) hold the coverage record, the sync commit,
-the action-to-code table, and how to update a model when the code changes.
+The verify skills (copied to `.pi/skills/` for pi) hold the coverage record, the sync commit
+(`66af270`), the action-to-code table, and how to update a model when the code changes.
 
 ## Why TLA+ and TLC
 
 The questions are about orderings and time: can a tick, a reply and a mute interleave so that a
 rule breaks? A model checker answers that for every interleaving within a bound, and TLA+ is
 the default for it. TLC is one Java jar, so every developer can run it. The property test
-`test/governor.property.test.ts` checks the real TypeScript on random inputs; the model checks
-every order of the calls, including code outside governor.ts (the concierge, the daemon, the
-approval gate) that the property test does not drive.
+`test/governor.property.test.ts` checks the real TypeScript on random inputs. The model checks
+every order of the calls, including code outside governor.ts that the property test does not
+drive: the concierge, the daemon, the approval gate.
 
 ## What "true to the code" means here
 
-- Every action in a model names the function it mirrors. A call that runs without an `await`
-  in the code (a governor function inside `db.tx()`, a synchronous SQLite UPDATE, the gate's
-  `request` + `ask` + `wait` registration) is one action.
-- Ghost variables record what reached the owner and what the owner said; the code has no such
-  state, and properties are stated over them.
+- Every action in a model names the function it mirrors. A call that runs with no `await` in the
+  code is one action. Examples: a governor function inside `db.tx()`, one synchronous SQLite
+  UPDATE, and the gate's `request` + `ask` + `wait` registration.
+- Ghost variables record what reached the owner and what the owner said. The code has no such
+  state; the properties are stated over them.
 - Each property was seen failing on a broken variant (`mutants/`, below) before its pass was trusted.
+- A suggested fix that is not in the code yet is a named switch (`TypedRefusedOverHttp`), checked
+  in `fixes/`. Configs without the switch describe the code as it is.
 
 ## Bounds and assumptions
 
 Governor (`MCGovernor.tla`):
-- Time is in 8-hour slots, 3 to a day (00–08 night, 08–16, 16–24), up to slot 4. The model is
-  the code with whole-slot durations and every event on a slot boundary; several events can
-  share a slot. No DST.
-- Three policies from `GovernorPolicy`: DEFAULT_POLICY-like (quiet at night, an evening digest,
-  1 interrupt a day, 1-slot gap, 1 critical); no quiet hours and no digest times; and quiet
-  hours that wrap midnight with a digest time inside them and one at their end, criticalPerDay 0.
-- Two notices with every action (`Governor.cfg`), three notices without owner feedback
-  (`Governor_three.cfg`); one topic, two dedup keys, all four urgencies; default expiry (the
-  `--deep` config adds a caller-set `expiresAt`). An offer must be able to expire before the
-  clock stops.
-- A stored concierge reply tells the owner every notice it was shown.
+- Time is in 8-hour slots, 3 to a day (00–08 night, 08–16, 16–24), up to slot 4. The model is the
+  code with whole-slot durations and every event on a slot boundary; several events can share a
+  slot. No DST.
+- Three policies from `GovernorPolicy`. The first is DEFAULT_POLICY-like: quiet at night, an
+  evening digest, 1 interrupt a day, 1-slot gap, 1 critical. The second has no quiet hours and no
+  digest times. The third has quiet hours that wrap midnight, a digest time inside them and one at
+  their end, and criticalPerDay 0. One more, `LongExpiryPolicies`, has notices that may outlive
+  `HISTORY_MS`.
+- Two notices with every action, three without owner feedback, one with the concierge and mutes;
+  one topic, two dedup keys, all four urgencies; default expiry (`--deep` adds a caller-set
+  `expiresAt`). An offer must be able to expire before the clock stops.
+- A stored concierge reply tells the owner every notice it was shown; there is no crash between
+  `this.reply()` and `confirmDelivered()` (no `await` between them). A restart releases claims.
 - `checkSend()` (src/core/invariants.ts) is not modeled; it can only refuse sends.
-- TLC fingerprints states with a VIEW that treats an `until <= now` as no entry and a
-  `lastTickAt` older than a day as exactly a day back. Both are equivalences the code cannot
-  tell apart. Topics and keys use symmetry in the safety runs; liveness runs use none.
+- TLC fingerprints states with a VIEW that treats an `until <= now` as no entry, and a
+  `lastTickAt` more than a day old as exactly a day back. The code cannot tell either pair apart.
+  Topics and keys use symmetry in the safety runs; the liveness runs use none.
 
 Approvals (`Approvals.cfg`):
-- Two tool calls whose hashes are equal or different, up to three approval rows (so a call can
-  retry), TTL of 2 slots, clock up to slot 3 (`--deep`: 4). Presses on any approval ever sent,
-  by the owner, a stranger and an HTTP client, at any time.
-- The gate may present any approval id to `consume()` (gate.ts presents its own), a superset of
-  the code's behaviors.
-- Channels report sender ids truthfully; only the person at the terminal reaches the CLI channel.
+- Two tool calls with equal or different hashes, two or three approval rows (retries), TTL of 2
+  slots, clock up to slot 3 (`--deep`: 4). Presses on any approval ever sent, by the owner, a
+  stranger and an HTTP client, as buttons or typed commands, at any time.
+- The gate may present any approval id to `consume()`; gate.ts presents its own, so this is a
+  superset of the code's behaviors.
+- Channels report sender ids truthfully; the pairing code reaches only the owner; only the person
+  at the terminal reaches the CLI channel.
 
-## Results at the sync commit (4c99637)
+## Results at the sync commit (66af270)
 
 | Check | Result | Distinct states |
 | --- | --- | --- |
-| governor/Governor (Budget, CriticalCap, Quiet, NoMuted, NoDuplicate, Conservation, FinalStable) | pass | 283,035 |
-| governor/Governor_three (same rules, 3 notices) | pass | 446,637 |
-| governor/Governor_live (EventuallyResolved) | pass | 52,263 |
-| governor/Governor_concierge (TypeOK, Budget, CriticalCap, Quiet, NoDuplicate, FinalStable) | pass | 1,106,495 |
-| governor/fixes/ClaimOnPeek (the suggested fix, all rules but NoMuted) | pass | 170,783 |
-| governor/Governor_deep, fixes/ClaimOnPeek_deep | pass | 1,309,195 / 2,517,724 |
-| approvals/Approvals (all five safety rules) | pass | see run.sh output |
-| approvals/Approvals_live (GateResolves) | pass | see run.sh output |
-| approvals/Approvals_deep | pass | see run.sh output |
+| governor/Governor (all governor calls, owner feedback; every safety rule and NoStaleDelivery) | pass | 258,439 |
+| governor/Governor_three (3 notices) | pass | 374,323 |
+| governor/Governor_live (EventuallyResolved) | pass | 44,599 |
+| governor/Governor_concierge (claim, every reply outcome, restart) | pass | 405,963 |
+| governor/Governor_concierge_mute (claim plus mutes during the turn) | pass | 55,724 |
+| governor/Governor_live_concierge (EventuallyResolved with claims) | pass | 14,086 |
+| governor/Governor_long_expiry (notices outliving HISTORY_MS) | pass | 176,922 |
+| governor/Governor_deep, Governor_concierge_feedback (`--deep`) | pass | 1,102,733 / 4,878,082 |
+| approvals/Approvals (the code: TypeOK, SingleUse, ExpiredNeverRuns) | pass | 127,450 |
+| approvals/fixes/TypedRefusedOverHttp (every rule, with the suggested fix) | pass | 325,263 |
+| approvals/Approvals_shutdown (every rule with `dispose()`) | pass | 59,118 |
+| approvals/Approvals_live (GateResolves) | pass | 423,984 |
 
-Open findings (each a `findings/*.cfg` that must keep breaking its rule until fixed):
+### Open findings
 
 | Finding | Rule | What happens, in the code's words | Suggested fix |
 | --- | --- | --- | --- |
-| governor/ConciergeToldTwice | Conservation | A notice is held overnight. At 08:00 the owner writes; the concierge's turn runs `notifier.waiting()` and puts the notice in the prompt. While the model runs, the 30-s tick crosses the end of quiet hours and `tick()` sends it in the morning digest. The turn ends, `this.reply()` lists it again, and `confirmDelivered()` skips it because it is no longer waiting. The owner is told twice. `/digest` during the turn does the same. | Claim at the peek: a status the tick, `/digest`, mute and expiry leave alone, marked digested when a reply is stored and released when none is. Modeled as `ClaimOnPeek`; passes. |
-| governor/ConciergePartialReply | Conservation | A turn ends with `r.error` but some text. The reply is stored (it may list the notices) but `confirmDelivered()` is not called, so they stay waiting and go out again in a digest. | Same fix: treat a stored reply as told, with or without an error. |
-| governor/ConciergeMutedDuplicate | NoDuplicate | The owner mutes a topic during the turn, which drops the notice. The reply tells it anyway. After an unmute, the same news is offered again, and `offer()`'s dedup ignores dropped notices, so it is delivered. | The claim fix (a claimed notice is not dropped, so it ends as digested and dedup sees it). |
-| governor/ConciergeMuted | NoMuted | A mute while the turn runs: the stored reply still tells the muted notice. | Owner decision: count a reply the owner asked for as solicited for NoMuted too, or drop muted topics from the reply before `this.reply()`. |
-| governor/ConciergeMutedAfterFix | NoMuted | The same residual under the claim fix. | As above. |
-| governor/DigestCommandStale | NoStaleDelivery (not a DESIGN.md rule) | `/digest` calls `takeForReply()`, which does not expire first. A notice past its `expiresAt` is shown if the 30-s tick has not run yet. | Expire (or skip) `expiresAt <= now` in `takeForReply()`. |
-| governor/WindowGap | Budget | With `minGapMinutes` above 24 h (config allows it), `tick()` prunes interrupts older than a day, so `spaced` sees none and the gap is not kept. | Validate `minGapMinutes <= 1440`, or prune with `max(DAY, minGap)`. |
-| governor/WindowDedup | NoDuplicate | With `dedupWindowMinutes` above 7 days, `tick()` forgets resolved notices after `HISTORY_MS`, so a repeat is not seen as a duplicate. | Validate `dedupWindowMinutes <= 7 * 1440`, or keep history for `max(HISTORY_MS, dedupWindow)`. |
-| approvals/HttpApprovalsOptIn | OwnerOnly | With `channels.http.allowApprovals = true`, anything holding the HTTP token or a signed ntfy button URL, the agent's own tools included, approves as the owner. | A documented opt-in risk; keep it off unless tools cannot read vigil's config. |
+| approvals/TypedApproveOverHttp | OwnerOnly, NoUnapprovedExecution, DeniedNeverRuns | `route()` refuses approve/deny over HTTP only for `msg.kind === "button"`. A typed `/approve ap_…` posted to `/api/message` is a message: `handleCommand` → `handleButton` → `decide()`. Anything holding the HTTP token, the agent's own tools included, approves its own risky call; a later owner Deny is then ignored. Replayed on the real daemon with the test harness: the button press is refused, the typed one leaves the approval `consumed`, and the worker's `sudo true` runs. | Apply the same refusal to `/approve` and `/deny` in `handleCommand` when the message came over HTTP. Modeled as `TypedRefusedOverHttp`; every rule passes. |
+| approvals/HttpApprovalsOptIn | OwnerOnly | With `channels.http.allowApprovals = true`, anything holding the HTTP token or a signed ntfy button URL approves as the owner. | A documented opt-in risk; keep it off unless tools cannot read vigil's config. |
+
+### Fixed findings (found by these models, fixed in the code)
+
+| Finding | Rule | Fixed in |
+| --- | --- | --- |
+| ConciergeToldTwice: a notice the concierge peeked for its prompt was digested by the 08:00 tick (or `/digest`) during the turn, then told again by the reply | Conservation | 99a81e7: `claim()` at the start of the turn |
+| ConciergePartialReply: a reply with `r.error` and text was stored but not confirmed, so its notices went out again | Conservation | 99a81e7 |
+| ConciergeMutedDuplicate: a notice dropped by a mute during the turn was still told; dedup ignored it, so the news went out again | NoDuplicate | 99a81e7 |
+| ConciergeMuted: a mute during the turn; the reply still told the notice | NoMuted | the owner's decision: replies are solicited, so NoMuted (like Quiet) covers unsolicited sends |
+| DigestCommandStale: `/digest` showed a notice past `expiresAt` before the next tick | NoStaleDelivery | 99a81e7: `takeForReply()` expires first |
+| WindowGap, WindowDedup: `minGapMinutes` above 24 h or `dedupWindowMinutes` above 7 days outlived what `tick()` keeps | Budget, NoDuplicate | 99a81e7: `validate()` rejects them |
+| ClaimPruned: a claimed notice older than `HISTORY_MS` was pruned by a tick mid-turn (the notify tool's `expires_in_hours` has no cap) | Conservation | 4d5f2c7: the prune keeps claimed notices |
+| MutedAfterRelease: owner mutes during the turn, the turn ends with no text, `release()` put the notice back, and the next digest sent it on the muted topic | NoMuted | 4d5f2c7: `release()` drops it as `drop:muted` |
+
+Characterized, not a finding: a notice claimed while fresh can expire while the model writes, and
+the reply then still tells it. NoStaleDelivery measures a reply at the time of the claim.
 
 ## Mutants: every property can fail
 
 `mutate.sh` copies a spec, applies one mutant (each mirrors a named code change), checks only that
-mutant's property, and expects the violation. At the sync commit all 20 are caught:
+mutant's property, and expects the violation. At the sync commit all of them are caught:
 
 | Mutant | Code change it mirrors | Caught by |
 | --- | --- | --- |
@@ -119,34 +142,45 @@ mutant's property, and expects the violation. At the sync commit all 20 are caug
 | governor-09-flush-all | `flush()` without `isWaiting` | Conservation |
 | governor-10-mute-final | `mute()` without `isWaiting` | FinalStable |
 | governor-11-no-expiry | `tick()` without its expiry pass | EventuallyResolved |
+| governor-12-tick-flushes-claimed | `isWaiting()` also counts claimed notices | Conservation |
+| governor-13-partial-released | a reply with `r.error` and text is released, not confirmed | Conservation |
+| governor-14-peek-without-claim | the concierge peeks with `waiting()` again | Conservation |
+| governor-15-claim-expired | `claim()` without its expiry test | NoStaleDelivery |
+| governor-16-no-release-on-restart | the `Notifier` constructor without `release()` | EventuallyResolved |
+| governor-17-digest-command-stale | `takeForReply()` without expire-first | NoStaleDelivery |
+| governor-18-prune-claimed | `tick()`'s prune without `status === "claimed"` | Conservation |
+| governor-19-release-ignores-mute | `release()` without the muted test | NoMuted |
 | approvals-01-consume-status | `consume()` without `status = 'approved'` | NoUnapprovedExecution |
 | approvals-02-consume-hash | `consume()` without `hash = ?` | NoUnapprovedExecution |
 | approvals-03-consume-once | `consume()` without `SET status = 'consumed'` | SingleUse |
 | approvals-04-decide-pending | `decide()` without `status = 'pending'` | DeniedNeverRuns |
 | approvals-05-consume-expiry | `consume()` without `expires_at > ?` | ExpiredNeverRuns |
 | approvals-06-inbox-owner | `route()` without the `isOwner` drop | OwnerOnly |
-| approvals-07-http-approvals | `route()` without the HTTP approve/deny refusal (81f48ef reverted) | OwnerOnly |
+| approvals-07-http-approvals | `route()` without the HTTP button refusal (81f48ef reverted) | OwnerOnly |
 | approvals-08-gate-ignores-consume | gate.ts runs on `outcome === "approved"` without `consume()` | NoUnapprovedExecution |
 | approvals-09-no-timer | `wait()` without its timer and the daemon without `expire()` | GateResolves |
 
-Defence in depth seen while writing mutants: `decide()`'s `expires_at > ?` alone is not needed
-for any property, because `consume()` re-checks expiry. Without it, a late Approve would make the
-owner see "👍 Approved" for a call that will not run.
+The approvals mutants for NoUnapprovedExecution, DeniedNeverRuns and OwnerOnly run on
+`fixes/TypedRefusedOverHttp.cfg`, because the code config already breaks those rules.
+
+Defence in depth seen while writing mutants: `decide()`'s `expires_at > ?` is not needed for any
+property, because `consume()` re-checks expiry. Without it, a late Approve would make the owner see
+"👍 Approved" for a call that will not run.
 
 ## The statechart
 
 `governor/chart.mmd` was drawn by the vendored pstack `statechart` skill from `governor/chart.cfg`
-(one notice, the default-like policy, 193 TLC states, every rule holds) with the view
-`governor/chart-view.ts`. "[unless Evening]" on "a notice comes in" is the model's time bound
-(an offer must be able to expire before the clock stops), not the code. Read results with the
-`/statechart` skill.
+(one notice, the DEFAULT_POLICY-like policy, 176 TLC states, every rule holds), using the view
+`governor/chart-view.ts`. The condition "[unless Evening]" on "a notice comes in" comes from the
+model's time bound (an offer must be able to expire before the clock stops), not from the code.
+Read results with the `/statechart` skill.
 
 ## Not covered
 
 - DST in `crossed()`, time zones, minute-level timing inside a slot.
 - More than three notices, two tool calls, or three approval rows; policies other than those listed.
-- `checkSend()`, the outbox after `enqueue` (see `outbox/`), channel delivery, the HTTP server.
+- `checkSend()`, the outbox after `enqueue` (see `outbox/`), channel delivery, the HTTP server
+  itself, how pairing codes are kept secret.
 - `classify()` and the gate rules (which calls are risky), hash collisions, pi changing a call's
   input after the gate returns.
 - Whether a concierge reply actually mentions the notices it was shown (assumed it does).
-- Restarts beyond `Approvals.dispose()` and retries as new calls.

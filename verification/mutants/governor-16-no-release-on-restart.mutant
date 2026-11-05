@@ -1,0 +1,11 @@
+spec: governor
+run: MCGovernor.tla
+config: Governor_live_concierge.cfg
+check: EventuallyResolved
+kind: property
+code: src/core/notifier.ts constructor: `this.state = release(this.state)` is gone, so a notice claimed by a turn that a restart cut off stays claimed forever
+@@@ old
+    /\ st' = StAfterRelease(Notices)
+@@@ new
+    /\ st' = st
+@@@ end

@@ -1,0 +1,11 @@
+spec: governor
+run: MCGovernor.tla
+config: Governor_concierge_mute.cfg
+check: NoMuted
+kind: invariant
+code: src/core/governor.ts release(): the muted test is gone (4d5f2c7 reverted), so a notice released after its topic was muted during the turn waits again and goes out in the next digest (finding MutedAfterRelease comes back)
+@@@ old
+                        THEN IF mutes[nt[m].topic] # NONE /\ mutes[nt[m].topic] > now
+@@@ new
+                        THEN IF FALSE
+@@@ end

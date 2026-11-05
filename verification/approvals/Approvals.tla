@@ -13,10 +13,12 @@
 (*  Request(c)     gate.ts tool_call hook: request() INSERT, h.ask()       *)
 (*                 (outbox enqueue of the buttons), wait() reads the row   *)
 (*                 and registers its waiter and timer: no await between.   *)
-(*  Press(p,a,b)   Daemon.route(msg): isOwner(), the HTTP refusal for      *)
-(*                 approve/deny unless channels.http.allowApprovals, then  *)
-(*                 handleButton -> decide(id, approve), which also calls   *)
-(*                 the waiter of that id.                                  *)
+(*  Press(p,a,b,t) Daemon.route(msg): isOwner(), then either a button      *)
+(*                 press (t = FALSE; refused on the http channel unless    *)
+(*                 channels.http.allowApprovals) or a typed /approve or    *)
+(*                 /deny command (t = TRUE; handleCommand, no HTTP check), *)
+(*                 then handleButton -> decide(id, approve), which also    *)
+(*                 calls the waiter of that id.                            *)
 (*  Timer(c)       wait()'s setTimeout: expire(), then done(status ===     *)
 (*                 "approved" ? "approved" : "expired").                   *)
 (*  Sweep          Daemon.tickGovernorAndClock: approvals.expire().        *)
@@ -49,8 +51,11 @@ CONSTANTS
     TTL,                 \* approvals.ttlMinutes, in slots
     MaxTime,             \* the clock stops here (bound)
     AllowHttpApprovals,  \* cfg.channels.http.allowApprovals (default false)
-    AnyIdToConsume       \* TRUE: the gate may present any approval id to consume() (gate.ts presents
+    AnyIdToConsume,      \* TRUE: the gate may present any approval id to consume() (gate.ts presents
                          \* its own a.id; TRUE checks that approvals.ts alone keeps the rules)
+    Shutdown,            \* TRUE: Approvals.dispose() (daemon shutdown) is in the model
+    TypedRefusedOverHttp \* FALSE: the code as it is. TRUE: the SUGGESTED FIX for finding
+                         \* TypedApproveOverHttp (the HTTP refusal also covers /approve and /deny)
 
 People == {"owner", "stranger", "http"}
 Ids == 1..MaxApprovals
@@ -110,11 +115,15 @@ Request(c) ==
     /\ aborted' = [aborted EXCEPT ![c] = FALSE]
     /\ UNCHANGED <<now, hashOf, disposed, ownerWord, decidedBy, execs>>
 
-(* Daemon.route for a button press "approve:<id>" / "deny:<id>" from principal p. *)
-Press(p, a, approve) ==
+(* Daemon.route for a button press "approve:<id>" / "deny:<id>" (typed = FALSE), or a typed
+   "/approve <id>" / "/deny <id>" message (typed = TRUE), from principal p. *)
+Press(p, a, approve, typed) ==
     /\ a \in Existing                  \* any button ever sent: stale ones and other calls' included
     /\ LET passesInbox == p # "stranger"                        \* isOwner(cfg, channel, senderId)
-           passesHttp  == p # "http" \/ AllowHttpApprovals      \* refused over HTTP unless allowed
+           \* msg.kind === "button" on the http channel is refused unless allowApprovals;
+           \* the typed command path (handleCommand) has no such check
+           httpChecked == ~typed \/ TypedRefusedOverHttp
+           passesHttp  == p # "http" \/ AllowHttpApprovals \/ ~httpChecked      \* refused over HTTP unless allowed
            \* decide(): UPDATE ... WHERE id = ? AND status = 'pending' AND expires_at > now
            changes == passesInbox /\ passesHttp
                       /\ ap[a].status = "pending"
@@ -184,6 +193,7 @@ Continue(c, a) ==
 
 (* Approvals.dispose(): disposed = true; every registered waiter's done("expired"). Rows unchanged. *)
 Dispose ==
+    /\ Shutdown
     /\ ~disposed
     /\ disposed' = TRUE
     /\ pc' = [c \in Calls |-> IF pc[c] = "waiting" THEN "woken" ELSE pc[c]]
@@ -201,7 +211,7 @@ Advance ==
     /\ now' = now + 1
     /\ UNCHANGED <<ap, nextId, hashOf, pc, myAp, outcome, aborted, disposed, ownerWord, decidedBy, execs>>
 
-PressAny == \E p \in People, a \in Ids, b \in BOOLEAN : Press(p, a, b)
+PressAny == \E p \in People, a \in Ids, b \in BOOLEAN, t \in BOOLEAN : Press(p, a, b, t)
 TimerAny == \E c \in Calls : Timer(c)
 AbortAny == \E c \in Calls : Abort(c)
 ContinueAny == \E c \in Calls, a \in Ids : Continue(c, a)

@@ -30,8 +30,13 @@ find_jar() {
 run_tlc() {
 	local dir=$1 module=$2 cfg=$3 out=$4 meta
 	meta=$(mktemp -d "${TMPDIR:-/tmp}/vigil-tlc.XXXXXX")
+	# -noGenerateSpecTE (no *_TTrace_* files beside the spec) exists only in newer TLC builds.
+	if [ -z "${TLC_TE+x}" ]; then
+		TLC_TE=""
+		java -cp "$JAR" tlc2.TLC -help 2>&1 | grep -q noGenerateSpecTE && TLC_TE="-noGenerateSpecTE"
+	fi
 	(cd "$dir" && java -XX:+UseParallelGC -Xss16m -cp "$JAR" tlc2.TLC -workers "${TLC_WORKERS:-auto}" \
-		-cleanup -metadir "$meta" -config "$cfg" "$module") >"$out" 2>&1
+		-cleanup $TLC_TE -metadir "$meta" -config "$cfg" "$module") >"$out" 2>&1
 	local rc=$?
 	rm -rf "$meta"
 	return $rc

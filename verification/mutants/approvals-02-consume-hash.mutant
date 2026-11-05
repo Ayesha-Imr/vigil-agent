@@ -1,6 +1,6 @@
 spec: approvals
 run: MCApprovals.tla
-config: Approvals.cfg
+config: fixes/TypedRefusedOverHttp.cfg
 check: NoUnapprovedExecution
 kind: invariant
 code: src/core/approvals.ts consume(): `AND hash = ?` is gone, so an approval for one call lets a different call run
