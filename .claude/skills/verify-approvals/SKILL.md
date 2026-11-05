@@ -35,8 +35,9 @@ sender for whom `isOwner(cfg, channel, senderId)` is false. `isOwner()` is true 
 request and every CLI line. A button press (`msg.kind === "button"`) on the `http` channel is
 refused unless `channels.http.allowApprovals`, because anything holding the HTTP token (the panel,
 a signed ntfy button, the agent's own tools) can send one. A typed `/approve <id>` or `/deny <id>`
-goes through `handleCommand` to the same `handleButton`, **without** that refusal: open finding
-`TypedApproveOverHttp` below.
+goes through `handleCommand` to the same `handleButton`, and since d83a053 it is refused the same
+way when it came over `http` or `ntfy` (before that it was not: fixed finding `TypedApproveOverHttp`).
+The model checks the two refusals separately, so either one can fail on its own.
 
 The model has three principals: `owner` (an identity in `owner.identities`, a paired identity, or
 the `vigil chat` terminal on the daemon's stdin), `stranger` (any other chat sender), and `http`
@@ -61,20 +62,14 @@ longer does (see below). TLC's full output is in `verification/out/approvals-<co
 
 - `Approvals.tla` — the model; every action's comment names the code it mirrors. Switches:
   `AllowHttpApprovals` (config), `AnyIdToConsume` (the gate may present any id; gate.ts presents its
-  own, so TRUE checks a superset), `Shutdown` (include `dispose()`), `TypedRefusedOverHttp` (FALSE =
-  the code; TRUE = the suggested fix for `TypedApproveOverHttp`).
+  own, so TRUE checks a superset), `Shutdown` (include `dispose()`).
 - `MCApprovals.tla` — symmetry over calls and hashes (safety only).
-- Required, run by `run.sh`: `Approvals.cfg` (the code as it is, two approval rows; it checks the
-  rules the open finding leaves intact: TypeOK, SingleUse, ExpiredNeverRuns),
-  `fixes/TypedRefusedOverHttp.cfg` (every rule, with the suggested fix), `Approvals_shutdown.cfg`
-  (every rule with `dispose()`, two rows, with the fix), `Approvals_live.cfg` (liveness, the code).
-- `--deep`: `Approvals_deep.cfg` (MaxTime = 4, shutdown, with the fix, every rule),
-  `Approvals_code_deep.cfg` (the code, three rows).
-- `findings/TypedApproveOverHttp.cfg` (`\* expect: OwnerOnly`) and
-  `findings/HttpApprovalsOptIn.cfg` (`\* expect: OwnerOnly`): each must break its rule.
-- Mutants: `verification/mutants/approvals-*.mutant`, each naming the code change it mirrors. The
-  ones for NoUnapprovedExecution, DeniedNeverRuns and OwnerOnly run on the fix config, because the
-  code config already breaks those rules.
+- Required, run by `run.sh`: `Approvals.cfg` (every rule, three approval rows),
+  `Approvals_shutdown.cfg` (every rule with `dispose()`, two rows), `Approvals_live.cfg` (liveness).
+- `--deep`: `Approvals_deep.cfg` (MaxTime = 4, shutdown, every rule).
+- `findings/HttpApprovalsOptIn.cfg` (`\* expect: OwnerOnly`): must break its rule.
+- Mutants: `verification/mutants/approvals-*.mutant`, each naming the code change it mirrors
+  (approvals-07 removes the button refusal, approvals-10 the typed one).
 
 ## Reading results
 
@@ -95,7 +90,7 @@ call runs".
 | Action | Code |
 | --- | --- |
 | `Request(c)` | gate.ts:217–228: classify risky, `approvals.request()` (approvals.ts:53), `h.ask()` (outbox enqueue of the buttons), `approvals.wait()` up to its first await (approvals.ts:86) |
-| `Press(p, a, b, t)` | `Daemon.route` src/daemon.ts:481 (`tryPair` :485, `isOwner` :489; button: HTTP refusal :508 → `handleButton` :637; typed: `handleCommand` :530 → `/approve` `/deny` :749 → `handleButton`) → `decide()` approvals.ts:120, which calls the waiter |
+| `Press(p, a, b, t)` | `Daemon.route` src/daemon.ts:481 (`tryPair` :485, `isOwner` :489; button: HTTP refusal :508 → `handleButton` :637; typed: `handleCommand` :530 → `/approve` `/deny` :749, HTTP/ntfy refusal :757 → `handleButton`) → `decide()` approvals.ts:120, which calls the waiter |
 | `Timer(c)` | `wait()`'s `setTimeout`: `expire()`, then `done(status === "approved" ? …)` |
 | `Sweep` | `Daemon.tickGovernorAndClock` daemon.ts:298 `approvals.expire()` (approvals.ts:154) |
 | `Abort(c)` | `wait()`'s abort listener: UPDATE to expired if pending/approved, then `done("expired")` |
@@ -109,16 +104,16 @@ buttons, more than two calls or three approval rows.
 
 ## Coverage record
 
-Sync commit: `66af270a9324d1292853781585c1eb522ef4d3d8` (covered files clean at that commit).
+Sync commit: `f3ff16b37ead2f70cad41f3e2f1529f07c71d150` (covered files clean at that commit).
 
 | File | Code covered | Blob at sync commit |
 | --- | --- | --- |
 | src/core/approvals.ts | `request`, `wait` (timer, abort listener, disposed), `decide`, `consume`, `expire`, `dispose` | `9368484524190db26f4add0b9d7bd6cdef93687e` |
 | src/agent/gate.ts | `approvalGate`'s `tool_call` hook (request, ask, wait, consume) | `83ac4f72ac2d7316e6b8df51d040bb08370ae767` |
-| src/daemon.ts | `route` (tryPair, isOwner drop, HTTP button refusal), `handleCommand` `/approve` `/deny`, `handleButton`, `tickGovernorAndClock` expire | `b5ba91c1f2eebcf38ebd9eef58cb58db5690bdcf` |
-| src/config.ts | `isOwner`, `channels.http.allowApprovals` | `fe8ffe2d5515145af06b943ac90549f20a00fac8` |
+| src/daemon.ts | `route` (tryPair, isOwner drop, HTTP button refusal), `handleCommand` `/approve` `/deny` (HTTP/ntfy refusal), `handleButton`, `tickGovernorAndClock` expire | `7a12c62c787931e3af00c101df4b5220cecadd91` |
+| src/config.ts | `isOwner`, `channels.http.allowApprovals` | `aebcafe815d39402c7a244a52a5f92ee7d782bb0` |
 
-To find drift: `git diff 66af270 -- src/core/approvals.ts src/agent/gate.ts src/daemon.ts src/config.ts`,
+To find drift: `git diff f3ff16b -- src/core/approvals.ts src/agent/gate.ts src/daemon.ts src/config.ts`,
 and look for any new caller of `decide()`, `consume()` or `expire()` (`git grep -n "decide(\|consume(\|handleButton("`),
 a new way to press or type an approval, or a channel whose sender ids are not the platform's own.
 
@@ -137,29 +132,29 @@ a new way to press or type an approval, or a channel whose sender ids are not th
 
 ## When a finding stops reproducing
 
-`FIXED?` on `findings/TypedApproveOverHttp.cfg` means the typed path is now refused over HTTP.
-Model it the way the code does (set `TypedRefusedOverHttp` to the code's behavior, or remove the
-switch), delete the finding and `fixes/TypedRefusedOverHttp.cfg`, put NoUnapprovedExecution,
-DeniedNeverRuns and OwnerOnly back into `Approvals.cfg`, and point the mutants at it. `FIXED?` on
-`HttpApprovalsOptIn` means HTTP presses are now authenticated as the owner: model that. If no code
-change explains a `FIXED?`, the model drifted.
+`FIXED?` on `findings/HttpApprovalsOptIn.cfg` means HTTP presses with `allowApprovals = true` are
+now authenticated as the owner: model that the way the code does, then delete the finding. If no
+code change explains a `FIXED?`, the model drifted: find out why before trusting a pass.
 
-## Open findings at the sync commit
+## Findings
 
-1. **TypedApproveOverHttp** (OwnerOnly; also NoUnapprovedExecution and DeniedNeverRuns). The
-   allowApprovals refusal in `route()` covers only `msg.kind === "button"`. A typed `/approve <id>`
-   posted to the HTTP API is a message: `handleCommand` → `handleButton` → `decide()`. Anything with
-   the HTTP token, the agent's own tools included, can approve its own risky call, and once it has,
-   the owner's Deny is ignored (first word wins). Replayed against the real daemon with
-   `test/helpers/harness.ts`: after the button press over HTTP is refused, `onInbound({ channel:
-   "http", kind: "message", text: "/approve ap_…" })` leaves the approval `consumed`, and the
-   worker's `sudo true` runs. Fix: apply the same refusal in `handleCommand` for `/approve` and
-   `/deny` (`if (to.channel === "http" && !s.cfg.channels.http?.allowApprovals)`), or move the check
-   into one helper that both paths call before `handleButton`. Modeled as `TypedRefusedOverHttp`;
-   with it every rule passes.
-2. **HttpApprovalsOptIn** (OwnerOnly; a documented opt-in risk): with `channels.http.allowApprovals
-   = true`, anything holding the HTTP token or a signed ntfy button URL approves as the owner. Keep
-   it off unless tools cannot read vigil's config or environment.
+Open at the sync commit:
+
+- **HttpApprovalsOptIn** (OwnerOnly; a documented opt-in risk): with `channels.http.allowApprovals
+  = true`, anything holding the HTTP token or a signed ntfy button URL approves as the owner. Keep
+  it off unless tools cannot read vigil's config or environment.
+
+Fixed:
+
+- **TypedApproveOverHttp** (OwnerOnly, NoUnapprovedExecution, DeniedNeverRuns), fixed in d83a053.
+  `route()` refused approve/deny over HTTP only for `msg.kind === "button"`; a typed `/approve <id>`
+  posted to the HTTP API went `handleCommand` → `handleButton` → `decide()`, so anything with the
+  token, the agent's own tools included, could approve its own risky call, after which the owner's
+  Deny was ignored. Replayed against the real daemon with `test/helpers/harness.ts`: the HTTP button
+  press was refused, the typed message left the approval `consumed`, and the worker's `sudo true`
+  ran. Mutant approvals-10 reverts the fix. Model gap, recorded honestly: the first approvals model
+  (before 66af270) had only button presses and would have missed this; the typed action was added
+  when `/approve` appeared in daemon.ts, and it found the bypass at once.
 
 By design and checked: a late Approve (after expiry, before the sweep) is ignored by `decide()`; an
 Approve then Deny runs the call (first word wins); a stale button for another approval decides

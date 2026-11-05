@@ -1,0 +1,11 @@
+spec: approvals
+run: MCApprovals.tla
+config: Approvals.cfg
+check: OwnerOnly
+kind: invariant
+code: src/daemon.ts handleCommand /approve and /deny: the `to.channel === "http" || to.channel === "ntfy"` refusal is gone (d83a053 reverted): a typed /approve posted to the HTTP API decides, so the agent's own tools can approve their calls
+@@@ old
+           typedRefused  == typed /\ p = "http" /\ ~AllowHttpApprovals
+@@@ new
+           typedRefused  == FALSE
+@@@ end

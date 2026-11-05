@@ -1,6 +1,6 @@
 spec: approvals
 run: MCApprovals.tla
-config: fixes/TypedRefusedOverHttp.cfg
+config: Approvals.cfg
 check: NoUnapprovedExecution
 kind: invariant
 code: src/core/approvals.ts consume(): `AND status = 'approved'` is gone from the UPDATE, so a pending approval can be consumed

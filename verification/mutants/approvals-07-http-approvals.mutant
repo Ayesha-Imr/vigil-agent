@@ -1,11 +1,11 @@
 spec: approvals
 run: MCApprovals.tla
-config: fixes/TypedRefusedOverHttp.cfg
+config: Approvals.cfg
 check: OwnerOnly
 kind: invariant
 code: src/daemon.ts route(): the refusal of approve/deny button presses on the "http" channel unless channels.http.allowApprovals is gone (commit 81f48ef reverted): anything holding the HTTP token, the agent's own tools included, can approve
 @@@ old
-           passesHttp  == p # "http" \/ AllowHttpApprovals \/ ~httpChecked      \* refused over HTTP unless allowed
+           buttonRefused == ~typed /\ p = "http" /\ ~AllowHttpApprovals
 @@@ new
-           passesHttp  == TRUE      \* refused over HTTP unless allowed
+           buttonRefused == FALSE
 @@@ end

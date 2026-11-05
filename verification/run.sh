@@ -45,7 +45,6 @@ REQUIRED=(
 	"governor MCGovernor.tla Governor_live_concierge.cfg"
 	"governor MCGovernor.tla Governor_long_expiry.cfg"
 	"approvals MCApprovals.tla Approvals.cfg"
-	"approvals MCApprovals.tla fixes/TypedRefusedOverHttp.cfg"
 	"approvals MCApprovals.tla Approvals_shutdown.cfg"
 	"approvals MCApprovals.tla Approvals_live.cfg"
 )
@@ -53,7 +52,6 @@ DEEP=(
 	"governor MCGovernor.tla Governor_deep.cfg"
 	"governor MCGovernor.tla Governor_concierge_feedback.cfg"
 	"approvals MCApprovals.tla Approvals_deep.cfg"
-	"approvals MCApprovals.tla Approvals_code_deep.cfg"
 )
 [ $deep = 1 ] && REQUIRED+=("${DEEP[@]}")
 
@@ -80,7 +78,7 @@ for spec in "${SPECS[@]}"; do
 		run_tlc "$VERIFY_DIR/$spec" "$module" "$cfg" "$out"
 		v=$(verdict "$out")
 		case "$v" in
-			"violated: Invariant $expect is violated."|"violated: Action property $expect is violated."|"violated: Temporal properties were violated.")
+			"violated: Invariant $expect is violated."|"violated: Action property $expect is violated."|"violated: Temporal properties were violated."|"violated: Temporal property $expect was violated.")
 				line FINDING "$name" "$expect breaks  (${out#"$VERIFY_DIR"/})"; open=$((open + 1)); specopen[$spec]=$(( ${specopen[$spec]:-0} + 1 )) ;;
 			pass) line 'FIXED?' "$name" "$expect now holds: update the verify skill (see its 'When a finding stops reproducing')"; failed=1; specfail[$spec]=1 ;;
 			*) line FAIL "$name" "$v  (${out#"$VERIFY_DIR"/})"; failed=1; specfail[$spec]=1 ;;

@@ -16,7 +16,8 @@
 (*  Press(p,a,b,t) Daemon.route(msg): isOwner(), then either a button      *)
 (*                 press (t = FALSE; refused on the http channel unless    *)
 (*                 channels.http.allowApprovals) or a typed /approve or    *)
-(*                 /deny command (t = TRUE; handleCommand, no HTTP check), *)
+(*                 /deny command (t = TRUE; handleCommand, refused on the  *)
+(*                 http and ntfy channels unless allowApprovals, d83a053), *)
 (*                 then handleButton -> decide(id, approve), which also    *)
 (*                 calls the waiter of that id.                            *)
 (*  Timer(c)       wait()'s setTimeout: expire(), then done(status ===     *)
@@ -53,9 +54,7 @@ CONSTANTS
     AllowHttpApprovals,  \* cfg.channels.http.allowApprovals (default false)
     AnyIdToConsume,      \* TRUE: the gate may present any approval id to consume() (gate.ts presents
                          \* its own a.id; TRUE checks that approvals.ts alone keeps the rules)
-    Shutdown,            \* TRUE: Approvals.dispose() (daemon shutdown) is in the model
-    TypedRefusedOverHttp \* FALSE: the code as it is. TRUE: the SUGGESTED FIX for finding
-                         \* TypedApproveOverHttp (the HTTP refusal also covers /approve and /deny)
+    Shutdown             \* TRUE: Approvals.dispose() (daemon shutdown) is in the model
 
 People == {"owner", "stranger", "http"}
 Ids == 1..MaxApprovals
@@ -120,10 +119,11 @@ Request(c) ==
 Press(p, a, approve, typed) ==
     /\ a \in Existing                  \* any button ever sent: stale ones and other calls' included
     /\ LET passesInbox == p # "stranger"                        \* isOwner(cfg, channel, senderId)
-           \* msg.kind === "button" on the http channel is refused unless allowApprovals;
-           \* the typed command path (handleCommand) has no such check
-           httpChecked == ~typed \/ TypedRefusedOverHttp
-           passesHttp  == p # "http" \/ AllowHttpApprovals \/ ~httpChecked      \* refused over HTTP unless allowed
+           \* route(): msg.kind === "button" on the http channel is refused unless allowApprovals
+           buttonRefused == ~typed /\ p = "http" /\ ~AllowHttpApprovals
+           \* handleCommand /approve, /deny: to.channel http or ntfy is refused unless allowApprovals
+           typedRefused  == typed /\ p = "http" /\ ~AllowHttpApprovals
+           passesHttp  == ~buttonRefused /\ ~typedRefused
            \* decide(): UPDATE ... WHERE id = ? AND status = 'pending' AND expires_at > now
            changes == passesInbox /\ passesHttp
                       /\ ap[a].status = "pending"

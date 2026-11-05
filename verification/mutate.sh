@@ -54,7 +54,7 @@ PY
 	run_tlc "$work" "$run" mutant.cfg "$out"
 	v=$(verdict "$out")
 	case "$v" in
-		"violated: Invariant $prop is violated."|"violated: Action property $prop is violated."|"violated: Temporal properties were violated.")
+		"violated: Invariant $prop is violated."|"violated: Action property $prop is violated."|"violated: Temporal properties were violated."|"violated: Temporal property $prop was violated.")
 			printf '%-8s %-40s %s\n' CAUGHT "$name" "$prop" ;;
 		pass) printf '%-8s %-40s %s holds on the mutant: the check cannot see this break\n' SURVIVED "$name" "$prop"; survived=1 ;;
 		*) printf '%-8s %-40s %s\n' ERROR "$name" "$v"; survived=1 ;;

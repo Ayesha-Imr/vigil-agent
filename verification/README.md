@@ -32,7 +32,7 @@ as recorded.
 | `outbox/`, `scheduler/`, `workers/` | written by other agents; `run.sh` calls their `check.sh` | their own skills |
 
 The verify skills (copied to `.pi/skills/` for pi) hold the coverage record, the sync commit
-(`66af270`), the action-to-code table, and how to update a model when the code changes.
+(`f3ff16b`), the action-to-code table, and how to update a model when the code changes.
 
 ## Why TLA+ and TLC
 
@@ -51,8 +51,8 @@ drive: the concierge, the daemon, the approval gate.
 - Ghost variables record what reached the owner and what the owner said. The code has no such
   state; the properties are stated over them.
 - Each property was seen failing on a broken variant (`mutants/`, below) before its pass was trusted.
-- A suggested fix that is not in the code yet is a named switch (`TypedRefusedOverHttp`), checked
-  in `fixes/`. Configs without the switch describe the code as it is.
+- While a suggested fix is not in the code yet, it is a named switch checked in a `fixes/` config;
+  once the code has it, the switch goes and the model describes the code (no switch is open now).
 
 ## Bounds and assumptions
 
@@ -84,7 +84,7 @@ Approvals (`Approvals.cfg`):
 - Channels report sender ids truthfully; the pairing code reaches only the owner; only the person
   at the terminal reaches the CLI channel.
 
-## Results at the sync commit (66af270)
+## Results at the sync commit (f3ff16b)
 
 | Check | Result | Distinct states |
 | --- | --- | --- |
@@ -96,16 +96,14 @@ Approvals (`Approvals.cfg`):
 | governor/Governor_live_concierge (EventuallyResolved with claims) | pass | 14,086 |
 | governor/Governor_long_expiry (notices outliving HISTORY_MS) | pass | 176,922 |
 | governor/Governor_deep, Governor_concierge_feedback (`--deep`) | pass | 1,102,733 / 4,878,082 |
-| approvals/Approvals (the code: TypeOK, SingleUse, ExpiredNeverRuns) | pass | 127,450 |
-| approvals/fixes/TypedRefusedOverHttp (every rule, with the suggested fix) | pass | 325,263 |
+| approvals/Approvals (every rule) | pass | 325,263 |
 | approvals/Approvals_shutdown (every rule with `dispose()`) | pass | 59,118 |
-| approvals/Approvals_live (GateResolves) | pass | 423,984 |
+| approvals/Approvals_live (GateResolves) | pass | 62,616 |
 
 ### Open findings
 
 | Finding | Rule | What happens, in the code's words | Suggested fix |
 | --- | --- | --- | --- |
-| approvals/TypedApproveOverHttp | OwnerOnly, NoUnapprovedExecution, DeniedNeverRuns | `route()` refuses approve/deny over HTTP only for `msg.kind === "button"`. A typed `/approve ap_…` posted to `/api/message` is a message: `handleCommand` → `handleButton` → `decide()`. Anything holding the HTTP token, the agent's own tools included, approves its own risky call; a later owner Deny is then ignored. Replayed on the real daemon with the test harness: the button press is refused, the typed one leaves the approval `consumed`, and the worker's `sudo true` runs. | Apply the same refusal to `/approve` and `/deny` in `handleCommand` when the message came over HTTP. Modeled as `TypedRefusedOverHttp`; every rule passes. |
 | approvals/HttpApprovalsOptIn | OwnerOnly | With `channels.http.allowApprovals = true`, anything holding the HTTP token or a signed ntfy button URL approves as the owner. | A documented opt-in risk; keep it off unless tools cannot read vigil's config. |
 
 ### Fixed findings (found by these models, fixed in the code)
@@ -119,6 +117,7 @@ Approvals (`Approvals.cfg`):
 | DigestCommandStale: `/digest` showed a notice past `expiresAt` before the next tick | NoStaleDelivery | 99a81e7: `takeForReply()` expires first |
 | WindowGap, WindowDedup: `minGapMinutes` above 24 h or `dedupWindowMinutes` above 7 days outlived what `tick()` keeps | Budget, NoDuplicate | 99a81e7: `validate()` rejects them |
 | ClaimPruned: a claimed notice older than `HISTORY_MS` was pruned by a tick mid-turn (the notify tool's `expires_in_hours` has no cap) | Conservation | 4d5f2c7: the prune keeps claimed notices |
+| TypedApproveOverHttp: a typed `/approve ap_…` posted to `/api/message` went `handleCommand` → `handleButton` → `decide()`, past the HTTP refusal that covered only buttons; anything with the token, the agent's tools included, approved its own call (replayed on the real daemon: `consumed`, `sudo true` ran). The first approvals model had only buttons and would have missed it (a model gap); the typed action, added when `/approve` appeared, found it | OwnerOnly, NoUnapprovedExecution, DeniedNeverRuns | d83a053: `handleCommand` refuses typed approvals over http/ntfy unless `allowApprovals` |
 | MutedAfterRelease: owner mutes during the turn, the turn ends with no text, `release()` put the notice back, and the next digest sent it on the muted topic | NoMuted | 4d5f2c7: `release()` drops it as `drop:muted` |
 
 Characterized, not a finding: a notice claimed while fresh can expire while the model writes, and
@@ -157,11 +156,12 @@ mutant's property, and expects the violation. At the sync commit all of them are
 | approvals-05-consume-expiry | `consume()` without `expires_at > ?` | ExpiredNeverRuns |
 | approvals-06-inbox-owner | `route()` without the `isOwner` drop | OwnerOnly |
 | approvals-07-http-approvals | `route()` without the HTTP button refusal (81f48ef reverted) | OwnerOnly |
+| approvals-10-typed-http | `handleCommand` `/approve` `/deny` without the HTTP/ntfy refusal (d83a053 reverted) | OwnerOnly |
 | approvals-08-gate-ignores-consume | gate.ts runs on `outcome === "approved"` without `consume()` | NoUnapprovedExecution |
 | approvals-09-no-timer | `wait()` without its timer and the daemon without `expire()` | GateResolves |
 
-The approvals mutants for NoUnapprovedExecution, DeniedNeverRuns and OwnerOnly run on
-`fixes/TypedRefusedOverHttp.cfg`, because the code config already breaks those rules.
+Two liveness wordings are accepted (`Temporal properties were violated.` and, in newer TLC builds,
+`Temporal property X was violated.`).
 
 Defence in depth seen while writing mutants: `decide()`'s `expires_at > ?` is not needed for any
 property, because `consume()` re-checks expiry. Without it, a late Approve would make the owner see

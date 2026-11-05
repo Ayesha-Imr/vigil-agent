@@ -47,7 +47,7 @@ verdict() {
 	local out=$1
 	if grep -q "Model checking completed. No error has been found." "$out"; then echo pass; return; fi
 	local v
-	v=$(grep -m1 -E "^Error: (Invariant .* is violated|Action property .* is violated|Temporal properties were violated|Deadlock reached)" "$out" | sed 's/^Error: //')
+	v=$(grep -m1 -E "^Error: (Invariant .* is violated|Action property .* is violated|Temporal properties were violated|Temporal property .* was violated|Deadlock reached)" "$out" | sed 's/^Error: //')
 	if [ -n "$v" ]; then echo "violated: $v"; return; fi
 	echo "error: $(grep -m1 -E '^Error|Exception' "$out" || tail -1 "$out")"
 }

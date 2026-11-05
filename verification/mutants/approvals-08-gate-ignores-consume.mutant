@@ -1,6 +1,6 @@
 spec: approvals
 run: MCApprovals.tla
-config: fixes/TypedRefusedOverHttp.cfg
+config: Approvals.cfg
 check: NoUnapprovedExecution
 kind: invariant
 code: src/agent/gate.ts: `if (outcome === "approved" && h.approvals.consume(...))` becomes `if (outcome === "approved")`: the gate runs the call without consuming

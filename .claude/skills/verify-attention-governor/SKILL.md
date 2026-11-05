@@ -103,10 +103,10 @@ Replay the trace against the code, one action at a time.
 | `Tick` | `tick()` governor.ts:234 (`crossed()` :216, `flush()`, the prune keeps waiting and claimed notices) via `Notifier.tick` notifier.ts:86, every 30 s from `Daemon.tickGovernorAndClock` src/daemon.ts:296 |
 | `DigestCommand` | `/digest` daemon.ts:744 → `Notifier.takeForReply` notifier.ts:105 → `takeForReply()` governor.ts:290 (expires stale notices first) |
 | `ConciergeClaim` | src/agent/concierge.ts:168 `claimForReply()` (notifier.ts:116) → `claim()` governor.ts:302: waiting, unexpired notices become `claimed` |
-| `ConciergeReply(o)` | concierge.ts:183–194: a reply with model text (`"stored"`, or `"partial"` when `r.error` is also set) → `this.reply()` then `confirmDelivered()` (notifier.ts:130 → `markDelivered()` governor.ts:314); no model text, SILENT, or a thrown turn (`finally`) → `releaseClaim()` (notifier.ts:125 → `release()` governor.ts:330, which drops a notice whose topic is muted now) |
-| `Restart` | the `Notifier` constructor, notifier.ts:60: `release(state, undefined, now)` |
-| `Mute` / `Unmute` | `mute()` governor.ts:350 / `unmute()` :360 via `Notifier.mute` notifier.ts:140 / `unmute` :149 (`/mute` daemon.ts:729, 😴 reaction, 🔕 button, the `mute_topic` tool) |
-| `Penalize` | `penalize()` governor.ts:367 via `Notifier.dislike` notifier.ts:154 (👎 reaction or button) |
+| `ConciergeReply(o)` | concierge.ts:183–194: a reply with model text (`"stored"`, or `"partial"` when `r.error` is also set) → `this.reply()` then `confirmDelivered()` (notifier.ts:136 → `markDelivered()` governor.ts:314); no model text, SILENT, or a thrown turn (`finally`) → `releaseClaim()` (notifier.ts:125 → `release()` governor.ts:330, which drops a notice whose topic is muted now) |
+| `Restart` | the `Notifier` constructor, notifier.ts:60: `releaseClaim(undefined)`, i.e. `release(state, undefined, now)` for every claim in one `db.tx()` (it also records the notices it drops; the model does not track the notices table) |
+| `Mute` / `Unmute` | `mute()` governor.ts:350 / `unmute()` :360 via `Notifier.mute` notifier.ts:146 / `unmute` :155 (`/mute` daemon.ts:729, 😴 reaction, 🔕 button, the `mute_topic` tool) |
+| `Penalize` | `penalize()` governor.ts:367 via `Notifier.dislike` notifier.ts:160 (👎 reaction or button) |
 | `Advance` | `Clock.now()` moves on |
 
 Assumptions: a stored reply tells the owner every notice its prompt listed; `this.reply()` and
@@ -119,19 +119,19 @@ notices, policies other than those in `MCGovernor.tla`.
 
 ## Coverage record
 
-Sync commit: `66af270a9324d1292853781585c1eb522ef4d3d8` (covered files clean at that commit).
+Sync commit: `f3ff16b37ead2f70cad41f3e2f1529f07c71d150` (covered files clean at that commit).
 Git blob ids at the sync commit, so `git hash-object FILE` tells you at once whether a file changed:
 
 | File | Code covered | Blob |
 | --- | --- | --- |
 | src/core/governor.ts | `isQuiet`, `within24h`, `lower`, `offer`, `crossed` (non-DST), `tick`, `flush`, `takeForReply`, `claim`, `markDelivered`, `release`, `waiting`, `mute`, `unmute`, `penalize` | `44eb7a53ce88062abc42d3f065f8e3588d96394e` |
-| src/core/notifier.ts | constructor `release`, `notify`, `tick`, `takeForReply`, `claimForReply`, `releaseClaim`, `confirmDelivered`, `mute`, `unmute`, `dislike` | `af66649186d3a64bc8377148f952077131f2f02b` |
+| src/core/notifier.ts | constructor `releaseClaim(undefined)`, `notify`, `tick`, `takeForReply`, `claimForReply`, `releaseClaim`, `confirmDelivered`, `mute`, `unmute`, `dislike` | `fd639270266bd09a3490dee45d6751b2bb7534d2` |
 | src/agent/concierge.ts | the owner-message turn: claim, reply, confirm or release (also in `finally`) | `d160c50c41068ae74c2ce9c479d0ee5d66322829` |
-| src/daemon.ts | `tickGovernorAndClock`, `/digest`, `/mute`, Mute/Less buttons | `b5ba91c1f2eebcf38ebd9eef58cb58db5690bdcf` |
-| src/config.ts | `validate()` limits on `minGapMinutes` and `dedupWindowMinutes` | `fe8ffe2d5515145af06b943ac90549f20a00fac8` |
+| src/daemon.ts | `tickGovernorAndClock`, `/digest`, `/mute`, Mute/Less buttons | `7a12c62c787931e3af00c101df4b5220cecadd91` |
+| src/config.ts | `validate()` limits on `minGapMinutes` and `dedupWindowMinutes` | `aebcafe815d39402c7a244a52a5f92ee7d782bb0` |
 | src/core/time.ts | `inWindow`, `DAY` | `cfb2b046396ec620023cc7df8991001295991fc0` |
 
-To find drift: `git diff 66af270 -- src/core/governor.ts src/core/notifier.ts src/agent/concierge.ts src/daemon.ts src/config.ts src/core/time.ts`,
+To find drift: `git diff f3ff16b -- src/core/governor.ts src/core/notifier.ts src/agent/concierge.ts src/daemon.ts src/config.ts src/core/time.ts`,
 and look for new code that writes `GovernorState`, calls `claimForReply()`, `takeForReply()`,
 `markDelivered()` or `release()`, or sends a notice without `notify()`.
 

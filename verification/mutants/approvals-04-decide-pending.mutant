@@ -1,6 +1,6 @@
 spec: approvals
 run: MCApprovals.tla
-config: fixes/TypedRefusedOverHttp.cfg
+config: Approvals.cfg
 check: DeniedNeverRuns
 kind: invariant
 code: src/core/approvals.ts decide(): `AND status = 'pending'` is gone, so an Approve tap after Deny flips the decision
