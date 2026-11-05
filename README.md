@@ -374,9 +374,9 @@ verification skills, so they can do the same for your code.
   any rule you add. File tools are checked by where a path really leads (relative paths, `..` and
   symlinks included), not by how it is spelled. Secret environment variables are removed from the process after startup, so
   the shells the agent runs don't inherit them.
-- `web_fetch` refuses loopback, private and cloud-metadata addresses on every redirect hop. (It
-  checks the resolved address before fetching; a DNS-rebinding race between that check and the
-  fetch is not closed yet.)
+- `web_fetch` refuses loopback, private and cloud-metadata addresses on every redirect hop. The
+  check runs inside the connection's own DNS lookup, so the address checked is the address
+  dialled (no DNS-rebinding window).
 - Work vigil infers from untrusted content (a watched page) gets web tools but no file tools, so an
   injected page cannot read a file and send it out.
 - **Shell sandbox.** When [bubblewrap](https://github.com/containers/bubblewrap) is installed

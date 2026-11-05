@@ -1,8 +1,10 @@
 // Web tools: fetch a page as readable text, and search. Everything they return is untrusted data,
 // and is labelled as such for the model.
 
+import { lookup as dnsLookup, type LookupAddress, type LookupAllOptions } from "node:dns";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import { Agent, fetch as guardedFetch } from "undici";
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { htmlToText } from "../core/watchers.ts";
@@ -75,6 +77,27 @@ async function assertPublic(url: URL): Promise<void> {
 	if (addrs.some((a) => isInternalAddress(a.address))) throw new Error(`refusing to fetch ${host}: it resolves to an internal address`);
 }
 
+type Resolver = (host: string, opts: LookupAllOptions, cb: (err: NodeJS.ErrnoException | null, addrs: LookupAddress[]) => void) => void;
+
+/**
+ * A DNS lookup for outgoing connections that refuses internal addresses. The check runs on the
+ * very addresses the socket then dials, so a name that resolves to a public address for the
+ * check and an internal one for the connection (DNS rebinding) cannot get through.
+ */
+export function guardedLookup(resolve: Resolver = dnsLookup as unknown as Resolver) {
+	return (host: string, opts: { all?: boolean; family?: number }, cb: (err: Error | null, address: string | LookupAddress[], family?: number) => void): void => {
+		resolve(host, { ...opts, all: true } as LookupAllOptions, (err, addrs) => {
+			if (err) return cb(err, "");
+			const bad = addrs.find((a) => isInternalAddress(a.address));
+			if (bad || !addrs.length) return cb(Object.assign(new Error(`refusing to fetch ${host}: it resolves to an internal address`), { code: "EINTERNAL" }), "");
+			if (opts.all) cb(null, addrs);
+			else cb(null, addrs[0].address, addrs[0].family);
+		});
+	};
+}
+
+const publicOnly = new Agent({ connect: { lookup: guardedLookup() as never } });
+
 export async function fetchText(url: string, signal?: AbortSignal): Promise<{ title: string; text: string; status: number }> {
 	if (!/^https?:\/\//i.test(url)) throw new Error("only http(s) URLs");
 	// Follow redirects by hand so every hop is checked, not just the first.
@@ -82,12 +105,15 @@ export async function fetchText(url: string, signal?: AbortSignal): Promise<{ ti
 	let res: Response | undefined;
 	for (let hop = 0; hop < 6; hop++) {
 		await assertPublic(current);
-		res = await fetch(current, {
+		res = (await guardedFetch(current, {
+			dispatcher: publicOnly,
 			headers: { "user-agent": UA, accept: "text/html,application/xhtml+xml,text/plain,application/json;q=0.9,*/*;q=0.5" },
 			// The 30 s limit holds even when the tool passes its own abort signal.
 			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000),
 			redirect: "manual",
-		});
+		}).catch((err: Error & { cause?: Error & { code?: string } }) => {
+			throw err.cause?.code === "EINTERNAL" ? err.cause : err;
+		})) as unknown as Response;
 		const loc = res.status >= 300 && res.status < 400 ? res.headers.get("location") : null;
 		if (!loc) break;
 		current = new URL(loc, current);

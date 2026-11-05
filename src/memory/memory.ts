@@ -32,10 +32,13 @@ line. Leave it empty and vigil only looks at its own open work.
 export class Memory {
 	readonly dir: string;
 	private readonly tz: () => string;
+	private readonly now: () => number;
 
-	constructor(dir: string, tz: () => string) {
+	/** `now` is vigil's clock, so journal days agree with the scheduler's (and with tests' clocks). */
+	constructor(dir: string, tz: () => string, now: () => number = Date.now) {
 		this.dir = dir;
 		this.tz = tz;
+		this.now = now;
 		mkdirSync(join(dir, "journal"), { recursive: true });
 		mkdirSync(join(dir, "notes"), { recursive: true });
 		if (!existsSync(this.memoryPath)) writeFileSync(this.memoryPath, TEMPLATE);
@@ -94,7 +97,7 @@ export class Memory {
 	}
 
 	/** Append one entry to today's journal. */
-	journal(kind: string, text: string, now = Date.now()): void {
+	journal(kind: string, text: string, now = this.now()): void {
 		const day = localDate(now, this.tz());
 		const m = localMinuteOfDay(now, this.tz());
 		const hhmm = `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;

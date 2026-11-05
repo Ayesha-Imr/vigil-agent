@@ -124,7 +124,7 @@ export class Daemon {
 		const outbox = new Outbox(db, clock, o.channels);
 		const route = o.ownerRoute ?? (() => defaultOwnerRoute(cfg, o.channels));
 		const notifier = new Notifier({ db, clock, outbox, policy: () => governorPolicy(cfg), route });
-		const memory = new Memory(o.paths.memory, () => cfg.owner.timezone);
+		const memory = new Memory(o.paths.memory, () => cfg.owner.timezone, () => clock.now());
 		const writable = [o.paths.work, o.paths.memory, o.paths.skills, "/tmp"];
 		let gate = loadGatePolicy(o.paths.policy, writable, o.paths.home);
 		const models = new ModelRouter(modelRuntime, () => cfg.models, clock);

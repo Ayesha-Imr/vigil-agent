@@ -123,6 +123,16 @@ describe("second audit: protection by location, not spelling", () => {
 	for (const d of ["work/tk1", "memory", "concierge", "pi", "sessions"]) mkdirSync(join(home2, d), { recursive: true });
 	const p2 = loadGatePolicy("/nonexistent", [join(home2, "work"), join(home2, "memory")], home2);
 	const at = (cwd: string, tool: string, input: Record<string, unknown>) => classify(p2, tool, input, cwd).verdict;
+	it("the connection dials only the addresses that were checked (no DNS rebinding)", async () => {
+		const { guardedLookup } = await import("../src/agent/web.ts");
+		let answer = "93.184.215.14";
+		const lookup = guardedLookup((_h, _o, cb) => cb(null, [{ address: answer, family: 4 }]));
+		const call = (all: boolean) => new Promise<unknown>((resolve, reject) => lookup("rebind.example", { all }, (err, a) => (err ? reject(err) : resolve(a))));
+		await expect(call(false)).resolves.toBe("93.184.215.14");
+		answer = "169.254.169.254"; // the second resolution, at connect time, turns internal
+		await expect(call(false)).rejects.toThrow(/internal/);
+		await expect(call(true)).rejects.toThrow(/internal/);
+	});
 	it("relative paths from the concierge and workers cannot reach config or credentials", () => {
 		expect(at(join(home2, "concierge"), "read", { path: "../config.json" })).toBe("forbidden");
 		expect(at(join(home2, "work/tk1"), "read", { path: "../../config.json" })).toBe("forbidden");

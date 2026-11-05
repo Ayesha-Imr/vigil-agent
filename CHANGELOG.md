@@ -5,7 +5,8 @@
 The first version.
 
 **Talking to vigil**
-- Telegram (grammY, long polling), Discord DMs, WhatsApp (Baileys, opt-in), ntfy push, an HTTP API
+- Telegram (grammY, long polling), Discord DMs, Slack (Socket Mode), Signal (signal-cli),
+  WhatsApp (Baileys, opt-in), ntfy push, an HTTP API
   with synchronous replies for iOS Shortcuts, and a terminal chat. One conversation across all of them.
 - Pairing: a channel without an owner prints a one-time `/pair` code to the server log.
 - Slash commands that work without a model: `/status`, `/tickets`, `/stop`, `/digest`, `/mute`,
@@ -32,7 +33,10 @@ The first version.
 - Approval gate: risky calls wait for the owner's button; approvals are hash-bound, single-use and
   expiring; approvals never come from the HTTP API by default.
 - bubblewrap sandbox for the shell; vigil's own state and the user's keys are hidden.
-- Protected files, secret scrubbing, SSRF guard for web fetches, and the rule of two for triage.
+- Protected files (checked by real path), secret scrubbing, an SSRF guard for web fetches that checks
+  the address inside the connection's own DNS lookup, and the rule of two for triage.
+- Pairing codes expire, are single-use and lock out after repeated wrong guesses; approvals typed as
+  `/approve <id>` on channels without buttons.
 
 **Models**
 - ChatGPT (Codex) via device-code login, also from the phone; OpenCode Go via API key; per-role
@@ -42,7 +46,10 @@ The first version.
 **Verification and tests**
 - TLA+ models of the governor, approvals, outbox, scheduler and worker pool, with mutants that show
   each property can fail, and project-local verify skills to keep them in sync.
-- About 500 unit, property and end-to-end tests that run the real daemon against pi's faux provider.
+- 18 defects found by model checking, each replayed on the TypeScript, fixed, and kept as a passing
+  regression check with a mutant that undoes the fix (see docs/REPORT.md).
+- About 580 unit, property and end-to-end tests that run the real daemon against pi's faux provider.
+- `vigil demo` (a scripted day, no accounts) and `vigil eval` (behavioural scenarios on your models).
 
 **Also**
 - A web panel, a pi package for laptop pi sessions, Docker and systemd deployment, CI.
