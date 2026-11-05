@@ -46,7 +46,7 @@ The first version.
 **Verification and tests**
 - TLA+ models of the governor, approvals, outbox, scheduler and worker pool, with mutants that show
   each property can fail, and project-local verify skills to keep them in sync.
-- 18 defects found by model checking, each replayed on the TypeScript, fixed, and kept as a passing
+- 19 defects found by model checking, each replayed on the TypeScript, fixed, and kept as a passing
   regression check with a mutant that undoes the fix (see docs/REPORT.md).
 - About 580 unit, property and end-to-end tests that run the real daemon against pi's faux provider.
 - `vigil demo` (a scripted day, no accounts) and `vigil eval` (behavioural scenarios on your models).

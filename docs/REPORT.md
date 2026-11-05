@@ -1,6 +1,6 @@
 # vigil: an always-on agent with a verified attention budget
 
-*Technical report, November 2026. Draft.*
+*Technical report, November 2026.*
 
 ## Abstract
 
@@ -114,7 +114,22 @@ followed. The scenarios are themselves tested both ways: a scripted well-behaved
 and a scripted badly behaved one fails each for the stated reason. Without credentials the runner
 refuses to run, since an agent that cannot think would "pass" every silence check.
 
-<!-- RESULTS: filled from verification/README.md when the runs complete -->
+**Results.** All checks pass on the current code with TLC 1.8.0 (`bash verification/run.sh`, about
+3.5 minutes on 4 cores; `--deep` adds roughly 12 minutes of larger bounds). Largest default
+configurations, in distinct states:
+
+| Spec | Properties checked | Largest default run | Mutants caught |
+| --- | --- | --- | --- |
+| Governor | Budget, CriticalCap, Quiet, NoMuted, NoDuplicate, Conservation, NoStaleDelivery, EventuallyResolved | 405,963 (concierge claims, every reply outcome, restart) | 19 / 19 |
+| Approvals | NoUnapprovedExecution, SingleUse, DeniedNeverRuns, ExpiredNeverRuns, OwnerOnly, GateResolves | 325,263 | 10 / 10 |
+| Outbox | OrderPreserved, SplitPartsInOrder, TicketMessagesInOrder, AtMostOnceWithoutCrashOrTimeout, RefRecorded, NoLoss | 671,632 | 10 / 10 |
+| Scheduler | OneTriggerPerSlot, NoOverlap, NoLostSlot, AtJobRuns, claimed runs complete across a crash | 250,737 (runs outliving the lease) | 9 / 9, plus 2 guard demos |
+| Workers | NoDoubleRun, slot limits, ReservedSlotWorks, OwnerNeverStarved, InputNeverLostSilently, StopSticks, RetriesBounded, EventLoopProgress | 432,443 | 12 / 12, plus 1 guard demo |
+
+Every defect found by model checking was replayed on the TypeScript before it was fixed, and stays
+in the suite as a passing regression check next to a mutant that undoes the fix. What remains
+open is one documented opt-in risk: with `channels.http.allowApprovals` on, anything holding the
+HTTP token approves as the owner.
 
 ## 4. Findings
 
@@ -168,6 +183,7 @@ checked by the model):
 | Workers | A crash during a ticket's first turn left no session file recorded; the restart began a new session without the owner's message | The owner's instruction silently lost |
 | Governor | A notice claimed for a reply could be pruned from the history before the reply ended | Neither told nor released |
 | Governor | A claim released after its topic was muted returned the notice to the queue | A muted topic delivered in a digest |
+| Approvals | A typed `/approve <id>` over the HTTP API passed the refusal that covered approve buttons only (also found, independently, by a code review) | The agent's own tools could approve their own calls |
 
 The mutation discipline mattered: several first drafts of the models passed trivially, and only
 showed their weakness when a mutant that removes a real check was *not* caught. Writing the

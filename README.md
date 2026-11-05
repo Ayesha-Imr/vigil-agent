@@ -309,7 +309,7 @@ vigil verify        # or: bash verification/run.sh   (needs Java)
 ```
 
 Every property has been shown to fail on a broken variant of the model (`verification/mutate.sh`
-and each spec's `mutants/`). The model checks found 18 real defects in the code, each replayed on the
+and each spec's `mutants/`). The model checks found 19 real defects in the code, each replayed on the
 TypeScript and fixed; [docs/REPORT.md](docs/REPORT.md) lists them.
 The property tests in `test/` check the TypeScript against the same rules. See
 [verification/README.md](verification/README.md) for bounds and what is not covered. The
