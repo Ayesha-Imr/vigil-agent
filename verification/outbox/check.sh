@@ -73,6 +73,8 @@ expect_pass "safety  Outbox.cfg        " "$DIR" Outbox.tla Outbox.cfg
 expect_pass "liveness OutboxLive.cfg   " "$DIR" Outbox.tla OutboxLive.cfg
 expect_pass "fixed   TwoDaemonsLocked  " "$DIR" Outbox.tla fixed/TwoDaemonsLocked.cfg
 expect_pass "fixed   ApprovalAskInOrder" "$DIR" Outbox.tla fixed/ApprovalAskInOrder.cfg
+expect_pass "fixed   HelperApprovalInOrder" "$DIR" Outbox.tla fixed/HelperApprovalInOrder.cfg
+expect_pass "fixed   StaleTakeoverStopsSending" "$DIR" Outbox.tla fixed/StaleTakeoverStopsSending.cfg
 if [ "${1:-}" = "--deep" ]; then
 	expect_pass "safety  OutboxDeep.cfg     " "$DIR" Outbox.tla OutboxDeep.cfg
 	expect_pass "safety  OutboxDeepRows.cfg " "$DIR" Outbox.tla OutboxDeepRows.cfg
@@ -85,6 +87,8 @@ expect_violation "mutant MutHeldBackDueOnly   " "$M" MutHeldBackDueOnly.tla MutH
 expect_violation "mutant MutNoSplitKey        " "$M" MutNoSplitKey.tla MutNoSplitKey.cfg SplitPartsInOrder
 expect_violation "mutant MutQuestionNoTicketId" "$M" MutQuestionNoTicketId.tla MutQuestionNoTicketId.cfg TicketMessagesInOrder
 expect_violation "mutant MutApprovalNoKey     " "$M" MutApprovalNoKey.tla MutApprovalNoKey.cfg TicketMessagesInOrder
+expect_violation "mutant MutDelegateNoTicketId" "$M" MutDelegateNoTicketId.tla MutDelegateNoTicketId.cfg TicketMessagesInOrder
+expect_violation "mutant MutMayDeliverOnce    " "$M" MutMayDeliverOnce.tla MutMayDeliverOnce.cfg SendsOnlyWithLock
 expect_violation "mutant MutNoRunningGuard    " "$M" MutNoRunningGuard.tla MutNoRunningGuard.cfg AtMostOnceWithoutCrashOrTimeout
 expect_violation "mutant MutNoLock            " "$M" MutNoLock.tla MutNoLock.cfg AtMostOnceWithoutCrashOrTimeout
 expect_violation "mutant MutLockNoTx          " "$M" MutLockNoTx.tla MutLockNoTx.cfg AtMostOnceWithoutCrashOrTimeout
@@ -92,10 +96,7 @@ expect_violation "mutant MutRefOutsideTx      " "$M" MutRefOutsideTx.tla MutRefO
 expect_violation "mutant MutPendingOnly       " "$M" MutPendingOnly.tla MutPendingOnly.cfg NoLoss
 expect_violation "mutant MutNoSendTimeout     " "$M" MutNoSendTimeout.tla MutNoSendTimeout.cfg NoLoss
 
-echo "== open findings (bugs in the current code; PASS = still reproduced)"
-F="$DIR/findings"
-expect_violation "finding HelperApprovalOutOfOrder" "$DIR" Outbox.tla "$F/HelperApprovalOutOfOrder.cfg" TicketMessagesInOrder
-expect_violation "finding NoProcStaleTakeover     " "$DIR" Outbox.tla "$F/NoProcStaleTakeover.cfg" AtMostOnceWithoutCrashOrTimeout
+echo "== open findings: none at the sync commit (see the verify-outbox skill)"
 
 echo "== characterizations (behavior by design, stated plainly; PASS = still behaves so)"
 C="$DIR/characterizations"
@@ -106,6 +107,7 @@ expect_violation "characterization CrashCopyUnroutable      " "$DIR" Outbox.tla 
 expect_violation "characterization TimeoutResends           " "$DIR" Outbox.tla "$C/TimeoutResends.cfg" AtMostOnceWithoutCrash
 expect_violation "characterization ErrorAfterDeliveryResends" "$DIR" Outbox.tla "$C/ErrorAfterDeliveryResends.cfg" AtMostOnceWithoutCrashOrTimeout
 expect_violation "characterization ChannelDownStrands       " "$DIR" Outbox.tla "$C/ChannelDownStrands.cfg" NoLoss
+expect_violation "characterization NoPidCheckInFlightResend " "$DIR" Outbox.tla "$C/NoPidCheckInFlightResend.cfg" AtMostOnceWithoutCrashOrTimeout
 
 if [ "$bad" -ne 0 ]; then echo "RESULT: FAIL (unexpected result above)"; exit 1; fi
 echo "RESULT: PASS"

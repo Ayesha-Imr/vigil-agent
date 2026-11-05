@@ -18,8 +18,9 @@ running, retry timers, crashes, restarts and a second daemon, within small bound
 | --- | --- | --- |
 | `OrderPreserved` | For one order key, a message never goes out while an earlier one with that key is still owed, unless the earlier one was dropped or has `BLOCKING_ATTEMPTS` (3) failed attempts. | The owner reads a ticket's "⏸ blocked" before its question, or a reply before the message it follows. |
 | `SplitPartsInOrder` | The parts of one long message go out in order, with the same exception. | The owner gets the second half of a message before the first. |
-| `TicketMessagesInOrder` | The messages of one ticket to one chat (results, `ask_owner` questions, the worker's approval asks) go out in the order queued, with the same exception (DESIGN.md:69). | The owner sees "blocked" or an approval request before the question it depends on. |
+| `TicketMessagesInOrder` | The messages of one ticket to one chat (results, `ask_owner` questions, the approval asks of its worker and helpers) go out in the order queued, with the same exception (DESIGN.md:69). | The owner sees "blocked" or an approval request before the question it depends on. |
 | `AtMostOnceWithoutCrashOrTimeout` | Apart from a copy whose send vigil lost track of (in flight when the process died or stopped, or abandoned by the 90 s timeout), the owner gets each message at most once. | The owner's phone buzzes twice for one message. |
+| `SendsOnlyWithLock` | With two daemons on one home, a daemon starts a send only while it holds the lock (checked at pass start and before each row). | A daemon that lost the lock keeps sending its pass, and the owner gets messages twice. |
 | `RefRecorded` | Every delivery vigil recorded as sent, of a message with a ref, has its `message_refs` row. | The owner replies to a ticket's message and the reply is not routed to the ticket. |
 | `NoLoss` (liveness) | Every enqueued message is eventually sent or dropped, assuming the channel is running and try-later errors, timeouts and hangs eventually stop; a hung `channel.send` is rescued by the 90 s timeout. | A message waits forever and the owner never hears it. |
 
@@ -29,9 +30,9 @@ of it. The order properties are history flags, set at the moment `channel.send` 
 ## Run it
 
 ```sh
-bash verification/outbox/check.sh            # about 1.5 min
+bash verification/outbox/check.sh            # about 1 min
 bash verification/outbox/check.sh --deep     # three larger runs on top, several more minutes
-bash verification/outbox/check.sh --trace findings/HelperApprovalOutOfOrder.cfg   # print one counterexample
+bash verification/outbox/check.sh --trace mutants/MutMayDeliverOnce.cfg   # print one counterexample
 ```
 
 Needs Java 11 or later and `tla2tools.jar`; set `TLA2TOOLS=/path/to/tla2tools.jar` if it is not
@@ -43,11 +44,12 @@ Every line is `PASS` or `FAIL`, and the script exits 1 on any `FAIL`. Each TLC r
 state space explode shows up instead of hanging. Expected today, all `PASS`:
 
 - current code, no error: `Outbox.cfg` (safety, 671,632 distinct states), `OutboxLive.cfg`
-  (liveness, 71,014), `fixed/TwoDaemonsLocked.cfg` (505), `fixed/ApprovalAskInOrder.cfg` (539).
+  (liveness, 71,014), `fixed/TwoDaemonsLocked.cfg` (505), `fixed/ApprovalAskInOrder.cfg` (539),
+  `fixed/HelperApprovalInOrder.cfg` (539), `fixed/StaleTakeoverStopsSending.cfg` (1,839).
   `--deep` adds `OutboxDeep.cfg` (1,656,967), `OutboxDeepRows.cfg` (2,598,494),
-  `OutboxLiveDeep.cfg` (193,181).
-- ten mutants, each violating its own property (see "Mutants").
-- two open findings and seven characterizations still show their violation. For these, `PASS`
+  `OutboxLiveDeep.cfg` (193,181) (last run at 42caa19; not rerun at the sync commit).
+- twelve mutants, each violating its own property (see "Mutants").
+- no open findings; eight characterizations still show their violation. For these, `PASS`
   means "still reproduced", not "fine".
 
 ## Trace validation (the real code against the model)
@@ -95,16 +97,7 @@ delivering. See verification/README.md, "Trace validation of the outbox".
 
 ## Does my change touch this?
 
-**Known drift (do this first).** Since the sync commit below, three covered changes landed and the
-model has not been updated for them: 06d3da0 (F2d fix: `deliverDue` re-checks `mayDeliver()`
-before each row; `lockHolderAlive` asks `ps` where there is no /proc), 2fed3cb (F1c fix: delegate
-helpers pass `ticketId` and the ticket's approval route) and fdcacea (F3 fix: the retry backoff
-counts from `this.clock.now()` after the send). The checks still pass, but F1c and F2d are listed
-below as open when they are fixed. Resync: model the per-row re-check and the ps liveness, turn
-F1c and F2d into fixed regression configs with mutants that revert each fix, characterize what
-remains of F2d (one send in flight across a suspend), then set a new sync commit.
-
-Coverage record. Sync commit: `42caa19bab6b7e27ecd57e1b6057531d94dbb08b` (the commit at
+Coverage record. Sync commit: `8a72cccba7819f6087fb9c8523688648cc3ee769` (the commit at
 which the model was last confirmed to describe the code below; every channel, including
 Slack and Signal, is the same abstract `Channel.send` to the model).
 
@@ -112,30 +105,30 @@ Slack and Signal, is the same abstract `Channel.send` to the model).
 | --- | --- | --- |
 | `src/core/outbox.ts` | `BLOCKING_ATTEMPTS` | 40 |
 | | `Outbox.enqueue`: one `Db.tx`, all parts; the generated `split:` key | 59-84 (key: 62) |
-| | `Outbox.deliverDue`: `running` guard and `mayDeliver()` (read once, at pass start), due `SELECT ... ORDER BY id` snapshot, loop, `finally` | 87-104 (88, 92-95) |
-| | `Outbox.heldBack`: earlier same-key row, pending/failing, attempts below the limit, read fresh | 106-115 |
-| | `Outbox.sendOne`: missing channel, `await withTimeout(channel.send)`, success tx with `message_refs`, `PermanentSendError` drop, transient retry from the snapshot's `attempts` | 117-169 |
-| | `withTimeout` / `SEND_TIMEOUT_MS`: rejects after 90 s, does not cancel the send | 186-203 |
+| | `Outbox.deliverDue`: `running` guard and `mayDeliver()` at pass start and before each row, due `SELECT ... ORDER BY id` snapshot, loop, `finally` | 87-107 (88, 92-95, 99) |
+| | `Outbox.heldBack`: earlier same-key row, pending/failing, attempts below the limit, read fresh | 109-118 |
+| | `Outbox.sendOne`: missing channel, `await withTimeout(channel.send)`, success tx with `message_refs`, `PermanentSendError` drop, transient retry from the snapshot's `attempts` (backoff from `clock.now()` after the send, 168: time the model abstracts) | 120-174 |
+| | `withTimeout` / `SEND_TIMEOUT_MS`: rejects after 90 s, does not cancel the send | 191-208 |
 | `src/channels/types.ts` | `PermanentSendError`; `Channel.send` | 54, 60 |
 | `src/agent/services.ts` | `sendSolicited`: orderKey `${ticket}:${channel}:${conversation}` for `ref.kind "ticket"` or `opts.ticketId` | 69-103 (key: 98-101) |
-| `src/agent/tools.ts` | `report` (ref ticket), `ask_owner` (ref attention, passes `ticketId`) | 305, 337 |
+| `src/agent/tools.ts` | `report` (ref ticket), `ask_owner` (ref attention, passes `ticketId`) | 309, 341 |
 | `src/agent/sessions.ts` | approval `ask`: the ticket's orderKey when `spec.ticketId` is set | 94-108 (key: 105) |
-| `src/agent/workers.ts` | worker sessions set `ticketId` and route asks to the ticket's chat | 106, 108 |
-| `src/agent/delegate.ts` | a ticket's helper session: no `ticketId`, no `approvalRoute` | 30-39 |
-| `src/core/notifier.ts` | `send`: enqueue with no orderKey | 178-191 |
-| `src/daemon.ts` | `lockHolderAlive` (live node/vigil pid via /proc; without /proc a heartbeat under 2 min) | 63-76 |
-| | `takeLock` (one `Db.tx`), `holdsLock`, `heartbeatLock` (refresh, or stop if lost) | 190-201, 204-206, 209-216 |
-| | `start`: takeLock, `mayDeliver = holdsLock`, failed channels deleted, `every(3_000, deliverDue)`, `every(30_000, heartbeatLock)` | 218-266 (220, 221, 234, 250, 251) |
-| | ad hoc `deliverDue`: `say`, `tryPair`; enqueue in `runJob` remind; `stop` releases the lock | 494-498, 603-604, 338 (no route: notifier, no key), 889-899 |
+| `src/agent/workers.ts` | worker sessions set `ticketId`; the delegate tool gets the ticket's route | 111, 109 |
+| `src/agent/delegate.ts` | a ticket's helper session passes `ticketId` and `approvalRoute` | 31-43 (40-41) |
+| `src/core/notifier.ts` | `send`: enqueue with no orderKey | 184-197 |
+| `src/daemon.ts` | `lockHolderAlive` (live node/vigil pid via /proc, else `ps -p pid -o comm=`, else a heartbeat under 2 min) | 63-82 |
+| | `takeLock` (one `Db.tx`), `holdsLock`, `heartbeatLock` (refresh, or stop if lost) | 196-207, 210-212, 215-222 |
+| | `start`: takeLock, `mayDeliver = holdsLock`, failed channels deleted, `every(3_000, deliverDue)`, `every(30_000, heartbeatLock)` | 224-272 (226, 227, 240, 256, 257) |
+| | ad hoc `deliverDue`: `say`, `tryPair`; enqueue in `runJob` remind; `stop` releases the lock | 502-506, 611-612, 344 (no route: notifier, no key), 923-933 |
 | `src/agent/concierge.ts`, `src/panel/panel.ts` | ad hoc `deliverDue` | 233, 118 |
 | `src/store/db.ts` | `Db.tx` (BEGIN IMMEDIATE; nested joins outer), `outbox` and `message_refs` tables, kv | 208-229, 80-97 (+ migration 162), 145-152, 245-257 |
-| `src/cli.ts` | `vigil chat` starts an embedded daemon on the same home | 376-386 |
+| `src/cli.ts` | `vigil chat` starts an embedded daemon on the same home | 377-388 |
 
-Run `git diff 42caa19bab6b7e27ecd57e1b6057531d94dbb08b -- <files above>`. If the diff touches
+Run `git diff 8a72cccba7819f6087fb9c8523688648cc3ee769 -- <files above>`. If the diff touches
 any of those functions, adds an `outbox.enqueue` caller with or without an `orderKey` for a
 ticket, or adds an `await` inside `deliverDue`/`sendOne`/`takeLock`, re-read the matching part of
 `verification/outbox/Outbox.tla` before trusting a `PASS`. Not covered at all: `split()`'s
-cutting (206-220; the model only uses the number of parts), `lookupRef`, `problems`, and the
+cutting (211-225; the model only uses the number of parts), `lookupRef`, `problems`, and the
 channels' own `send` code.
 
 ## Reading a result
@@ -158,7 +151,7 @@ channels' own `send` code.
 | `Hang` | the channel will never answer this attempt (`ph = "hung"`) |
 | `TimeoutFires` | `withTimeout` rejected after 90 s: the transient path; the send goes to `orphans` |
 | `OrphanLands(i)` / `OrphanFails(i)` | an abandoned send delivers after all (nothing records it) / fails |
-| `ContinueWith` | `deliverDue` resumes after `await this.sendOne(row)` (98) and runs to the next await, or ends (`finally`, `ph = "idle"`) |
+| `ContinueWith` | `deliverDue` resumes after `await this.sendOne(row)` (101) and runs to the next await, or ends (`finally`, `ph = "idle"`), also when `mayDeliver()` is false before a row (99) |
 | `BackoffElapses(r)` | the clock passes row r's `next_attempt_at` |
 | `Crash` / `Restart` | the process dies (also `Daemon.stop` closing the DB under an in-flight send) / systemd starts `Daemon.start` |
 | `TakeLockWith(d,...)` | daemon d's `takeLock` (190-201): runs, or throws "already running" (`proc = "refused"`) |
@@ -199,7 +192,7 @@ row (or the reverse).
 1. Find the step(s) in `Outbox.tla` whose comment cites the changed lines; change the model to
    match. Each step must stay one synchronous stretch of the code between two awaits, or one
    `Db.tx`. The mutable parts are parameters (`EnqueueWith(Key)`, `PassStartWith(p, Guarded,
-   Selected, Blocks)`, `ContinueWith`, `SucceedWith(p, Atomic)`, `LockStepsWith(Checked, Split,
+   Selected, Blocks)`, `ContinueWith`, `PassStartWithR`/`ContinueWithR` (Recheck = the per-row `mayDeliver`), `SucceedWith(p, Atomic)`, `LockStepsWith(Checked, Split,
    Recheck)`), so mutants can swap one piece.
 2. A new enqueue caller or order key: follow `TicketOf`/`OutboxKey` in `Outbox.tla`
    (services.ts:98-101, sessions.ts:105) and add it to a scenario at the end of the file.
@@ -222,20 +215,22 @@ Each file in `verification/outbox/mutants/` names the code change in its header.
 
 | Mutant | Code change | Breaks |
 | --- | --- | --- |
-| `MutHeldBackDueOnly` | heldBack's query adds `AND next_attempt_at <= ?` (outbox.ts:108-113) | `OrderPreserved` |
+| `MutHeldBackDueOnly` | heldBack's query adds `AND next_attempt_at <= ?` (outbox.ts:111-116) | `OrderPreserved` |
 | `MutNoSplitKey` | `const orderKey = item.orderKey ?? null` (outbox.ts:62) | `SplitPartsInOrder` |
-| `MutQuestionNoTicketId` | `ask_owner` stops passing `ticketId` (tools.ts:337; was finding F1) | `TicketMessagesInOrder` |
+| `MutQuestionNoTicketId` | `ask_owner` stops passing `ticketId` (tools.ts:341; was finding F1) | `TicketMessagesInOrder` |
 | `MutApprovalNoKey` | delete the approval ask's `orderKey` (sessions.ts:105; was F1b) | `TicketMessagesInOrder` |
+| `MutDelegateNoTicketId` | the helper's `buildSession` without `ticketId` / `approvalRoute` (delegate.ts:40-41; was F1c) | `TicketMessagesInOrder` |
 | `MutNoRunningGuard` | drop `this.running ||` (outbox.ts:88) | `AtMostOnceWithoutCrashOrTimeout` |
-| `MutNoLock` | delete `this.takeLock()` (daemon.ts:220; was F2) | `AtMostOnceWithoutCrashOrTimeout` (two daemons) |
-| `MutLockNoTx` | takeLock without its `db.tx` (daemon.ts:194-200; was F2c) | `AtMostOnceWithoutCrashOrTimeout` (two daemons) |
-| `MutRefOutsideTx` | the sent UPDATE and the `message_refs` INSERT outside `db.tx` (outbox.ts:136-148) | `RefRecorded` |
+| `MutNoLock` | delete `this.takeLock()` (daemon.ts:226; was F2) | `AtMostOnceWithoutCrashOrTimeout` (two daemons) |
+| `MutLockNoTx` | takeLock without its `db.tx` (daemon.ts:200-206; was F2c) | `AtMostOnceWithoutCrashOrTimeout` (two daemons) |
+| `MutMayDeliverOnce` | delete `if (!this.mayDeliver()) break;` (outbox.ts:99; was F2d) | `SendsOnlyWithLock` (two daemons, no /proc or ps) |
+| `MutRefOutsideTx` | the sent UPDATE and the `message_refs` INSERT outside `db.tx` (outbox.ts:139-151) | `RefRecorded` |
 | `MutPendingOnly` | due query `status IN ('pending')` (outbox.ts:93) | `NoLoss` |
-| `MutNoSendTimeout` | `await channel.send(...)` without `withTimeout` (outbox.ts:128) | `NoLoss` |
+| `MutNoSendTimeout` | `await channel.send(...)` without `withTimeout` (outbox.ts:131) | `NoLoss` |
 
-Not guarded by a mutant: `heartbeatLock`'s re-check and `mayDeliver`. On Linux the holder is
-never taken over, so they never act there; where they matter (no /proc) the property already
-fails, see F2d.
+Not guarded by a mutant: `heartbeatLock`'s re-check (where the holder can be checked by /proc or
+`ps` it never acts; with neither, `MutMayDeliverOnce` covers the part that matters) and the `ps`
+branch itself (the model's `ProcFs` stands for "/proc or ps works").
 
 ## Fixed findings (kept as passing checks)
 
@@ -246,28 +241,14 @@ fails, see F2d.
 | F2b: a live holder with a stale heartbeat (suspend) was taken over and kept sending | `4f5ff60` (lockHolderAlive via /proc, heartbeat re-check, mayDeliver) | `fixed/TwoDaemonsLocked.cfg` (ProcFs = TRUE, MaxStale = 1) |
 | F2c: takeLock's read and write were two statements; two daemons started together both ran | `4f5ff60` (one `Db.tx`) | `fixed/TwoDaemonsLocked.cfg` |
 | F1b: a worker's approval ask had no order key and overtook the ticket's question | `4f5ff60` | `fixed/ApprovalAskInOrder.cfg` |
+| F1c: a ticket's helper session had no `ticketId`; its approval ask overtook the ticket's question | `2fed3cb` | `fixed/HelperApprovalInOrder.cfg` |
+| F2d: without /proc the heartbeat alone decided; after a suspend a second daemon took over while the first went on sending its pass | `06d3da0` (`ps` check; `mayDeliver` before each row) | `fixed/TwoDaemonsLocked.cfg` (ps), `fixed/StaleTakeoverStopsSending.cfg` (neither /proc nor ps) |
+| F3 (found by trace validation): a retry's `next_attempt_at` counted from before a slow send | `fdcacea` | `trace/check.sh` (the model abstracts time; no model change) |
 
 ## Open findings (bugs at the sync commit)
 
-- `findings/HelperApprovalOutOfOrder.cfg` (F1c), rule `TicketMessagesInOrder`: a ticket's helper
-  session (delegate.ts:30-39) has no `ticketId`, so its approval ask has no order key and
-  overtakes the ticket's question whose send failed once (when the ticket's chat is the owner's
-  main chat, where the helper's ask goes).
-- `findings/NoProcStaleTakeover.cfg` (F2d), rule `AtMostOnceWithoutCrashOrTimeout`: without
-  /proc (macOS) `lockHolderAlive` trusts the heartbeat only (daemon.ts:73-75). After a suspend a
-  second daemon takes the lock while the first still has a send in flight or rows left in its
-  pass (`mayDeliver` is read at pass start only, outbox.ts:88), and both send the same row.
-
-- F3 (FIXED, regression test `F3` in test/outbox.test.ts), found by trace validation (no property breaks, so `check.sh` has no line for it): sendOne
-  computes a retry's backoff from the `now` it read before `await channel.send` (outbox.ts:122,
-  166). After a 90 s timeout the retry of attempts 1-5 (backoff 5-80 s) is due at once, so a channel
-  that keeps timing out is retried about every 93 s instead of with growing gaps. Fix:
-  `this.clock.now() + backoff`. Once it is fixed, `coverage.json` of the trace check stops counting
-  "timeout: backoff already over when written".
-
-When a fix lands: the finding's line turns `FAIL` in check.sh, which is the signal. Confirm the cfg
-now passes, move it to `fixed/` with an `expect_pass` line, add a mutant that undoes the fix, and
-update this list.
+None. When check.sh finds a new one, add its config under `findings/` with an `expect_violation`
+line, and list it here with its counterexample in the code's words.
 
 ## Characterizations (by design, stated plainly; they must keep failing)
 
@@ -283,6 +264,9 @@ update this list.
   (the trade outbox.ts:124-125 states).
 - `ErrorAfterDeliveryResends`: if `channel.send` throws after the message went out (Discord failing
   on its second chunk), the owner gets it twice, no crash needed.
+- `NoPidCheckInFlightResend` (what remains of F2d): only where neither /proc nor `ps` can tell the
+  holder runs, the one send in flight across a suspend goes out twice: the second daemon takes the
+  stale lock and sends the row, and the first daemon's send then returns and records it too.
 - `ChannelDownStrands`: a channel that failed to start stays out of the map until restart; its
   messages wait (outbox.ts:121) and hold back their order key.
 
@@ -294,7 +278,7 @@ update this list.
   `OutboxLive.cfg`: same rows, no crash, channel always present. `--deep`: `OutboxDeep.cfg` 4
   errors (1,656,967 states), `OutboxDeepRows.cfg` 5 rows, adding the "ready" report (2,598,494
   states), `OutboxLiveDeep.cfg` with 1 crash and no drop (193,181 states); together about 4 min.
-- Two daemons (`fixed/`, findings F2d, `MutNoLock`, `MutLockNoTx`): 2 rows, 1 error, no timeouts or
+- Two daemons (`fixed/TwoDaemonsLocked`, `fixed/StaleTakeoverStopsSending`, `NoPidCheckInFlightResend`, `MutNoLock`, `MutLockNoTx`, `MutMayDeliverOnce`): 2 rows, 1 error, no timeouts or
   crashes, 1 stale heartbeat. With Daemons = 1 the lock is an assumption (one daemon per home);
   with Daemons = 2 it is a guard modelled as the code does it.
 - One channel, one conversation; the order keys in the code include both.

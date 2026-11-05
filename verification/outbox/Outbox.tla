@@ -5,31 +5,33 @@
 (* Code (see .claude/skills/verify-outbox/SKILL.md for the coverage        *)
 (* record and sync commit):                                                *)
 (*   src/core/outbox.ts   Outbox.enqueue (59-84), Outbox.deliverDue        *)
-(*                        (87-104, mayDeliver at 88), Outbox.heldBack      *)
-(*                        (106-115), Outbox.sendOne (117-169),             *)
-(*                        BLOCKING_ATTEMPTS (40), withTimeout /            *)
-(*                        SEND_TIMEOUT_MS (186-203)                        *)
+(*                        (87-107: mayDeliver at 88 and before each row,   *)
+(*                        99), Outbox.heldBack (109-118), Outbox.sendOne   *)
+(*                        (120-174), BLOCKING_ATTEMPTS (40), withTimeout / *)
+(*                        SEND_TIMEOUT_MS (191-208)                        *)
 (*   src/agent/services.ts sendSolicited (69-103): orderKey for ref.kind   *)
 (*                        "ticket", or when opts.ticketId is given (98-101)*)
-(*   src/agent/tools.ts   report (305) and ask_owner (337, passes ticketId)*)
+(*   src/agent/tools.ts   report (309) and ask_owner (341, passes ticketId)*)
 (*   src/agent/sessions.ts approval ask (94-108): the ticket's orderKey    *)
-(*                        when the session has spec.ticketId (105); a      *)
-(*                        worker sets it (workers.ts:106), a ticket's     *)
-(*                        helper session does not (delegate.ts:30-39)      *)
-(*   src/daemon.ts        lockHolderAlive (63-76), takeLock (190-201),     *)
-(*                        holdsLock (204-206), heartbeatLock (209-216),    *)
-(*                        start (218-266): lock first, mayDeliver =        *)
-(*                        holdsLock (221), failed channels deleted (234),  *)
-(*                        deliverDue every 3 s (250), heartbeat every 30 s *)
-(*                        (251); say (494-498) and tryPair (603-604) call  *)
-(*                        deliverDue ad hoc; so do concierge.ts:233 and    *)
-(*                        panel.ts:118.                                    *)
+(*                        when the session has spec.ticketId (105); set by *)
+(*                        workers (workers.ts:111) and by a ticket's helper*)
+(*                        sessions (delegate.ts:31-44)                     *)
+(*   src/daemon.ts        lockHolderAlive (63-82: /proc, else ps, else the *)
+(*                        heartbeat), takeLock (196-207), holdsLock        *)
+(*                        (210-212), heartbeatLock (215-222), start        *)
+(*                        (224-272): lock first, mayDeliver = holdsLock    *)
+(*                        (227), failed channels deleted (240), deliverDue *)
+(*                        every 3 s (256), heartbeat every 30 s (257); say *)
+(*                        (502-506) and tryPair (611-612) call deliverDue  *)
+(*                        ad hoc; so do concierge.ts:233 and panel.ts:118. *)
+(*  (Retry backoff from Clock.now() after the send, outbox.ts:168, is time *)
+(*  the model abstracts: it only says the retry is due later.)             *)
 (*                                                                         *)
 (* Atomicity, as in the code:                                              *)
 (*  - Node runs one piece of JavaScript at a time; code between two        *)
 (*    awaits is one step.  The awaits in deliverDue/sendOne are            *)
-(*    `await withTimeout(90 s, channel.send(...))` (outbox.ts:128) and     *)
-(*    `await this.sendOne` (outbox.ts:98).  So a pass has these steps:     *)
+(*    `await withTimeout(90 s, channel.send(...))` (outbox.ts:131) and     *)
+(*    `await this.sendOne` (outbox.ts:101).  So a pass has these steps:     *)
 (*      PassStart  guard + SELECT + loop until the first await             *)
 (*      SendReturns  channel.send settles; sendOne writes the DB, returns  *)
 (*      TimeoutFires  the 90 s timer rejects first; sendOne takes the      *)
@@ -39,7 +41,7 @@
 (*    Rows skipped by heldBack (`continue`, no await) are skipped inside   *)
 (*    the same step.                                                       *)
 (*  - enqueue is one Db.tx() (outbox.ts:63): one step, all parts at once.  *)
-(*  - sendOne's success writes are one Db.tx() (outbox.ts:136-148).  Each  *)
+(*  - sendOne's success writes are one Db.tx() (outbox.ts:139-151).  Each  *)
 (*    other sendOne branch is one UPDATE (the drop's db.event row is not   *)
 (*    modelled).  So no step leaves the DB half-written, and a crash       *)
 (*    (kill, power loss, or Daemon.stop closing the DB under an in-flight  *)
@@ -47,7 +49,7 @@
 (*    send is in flight: the message may already be out, and the row      *)
 (*    still says pending.                                                  *)
 (*  - takeLock is a getKv and a setKv inside one Db.tx (BEGIN IMMEDIATE,   *)
-(*    daemon.ts:194-200): one step, also across processes.  The mutant         *)
+(*    daemon.ts:200-206): one step, also across processes.  The mutant         *)
 (*    MutLockNoTx splits it.                                               *)
 (*  - The daemon's callers do `enqueue(); void deliverDue()` with no await *)
 (*    between; the model lets other steps fall between them, which only    *)
@@ -61,7 +63,7 @@
 (*  - The channel's answer per attempt is chosen freely: success,          *)
 (*    transient error, PermanentSendError, slower than 90 s, or no answer  *)
 (*    ever (Hang); a missing channel is decided per process lifetime       *)
-(*    (chanUp), as daemon.ts:234 does.  Bounds on errors, drops, timeouts  *)
+(*    (chanUp), as daemon.ts:240 does.  Bounds on errors, drops, timeouts  *)
 (*    and crashes are global, not per row.                                 *)
 (*  - external_id is the delivery's number in `log`.                       *)
 (*  - One channel and one conversation (the order keys of the code include *)
@@ -69,13 +71,14 @@
 (*  - The lock: with Daemons = 1 it is an assumption: one daemon per home,*)
 (*    and a restart takes over the dead pid's lock.  With Daemons = 2 it   *)
 (*    is a guard, as the code does it: a second daemon refuses to start    *)
-(*    while the holder runs (lockHolderAlive: a live node/vigil pid in     *)
-(*    /proc; without /proc, ProcFs = FALSE, a heartbeat under 2 minutes    *)
-(*    old); each pass starts only while holdsLock() (mayDeliver); every    *)
-(*    30 s the holder re-checks and a daemon that lost the lock stops.     *)
-(*    A live holder whose heartbeat looks stale (machine suspended over 2  *)
-(*    min: Date.now() jumps, the 30 s timer on the monotonic clock does    *)
-(*    not fire) is the environment step HeartbeatGoesStale.                *)
+(*    while the holder runs (lockHolderAlive: a live node/vigil pid by     *)
+(*    /proc or by `ps -p pid -o comm=`; only if both are unavailable,      *)
+(*    ProcFs = FALSE, a heartbeat under 2 minutes old); deliverDue sends   *)
+(*    only while holdsLock(), checked at pass start and before every row;  *)
+(*    every 30 s the holder re-checks and a daemon that lost the lock      *)
+(*    stops.  A live holder whose heartbeat looks stale (machine suspended *)
+(*    over 2 min: Date.now() jumps, the 30 s timer on the monotonic clock  *)
+(*    does not fire) is the environment step HeartbeatGoesStale.           *)
 (***************************************************************************)
 EXTENDS Integers, Sequences, FiniteSets, TLC
 
@@ -88,9 +91,9 @@ CONSTANTS
     MaxCrashes,          \* bound: process deaths (Daemons = 1 only)
     MaxPasses,           \* deliverDue calls that could be inside the loop at once
     Daemons,             \* 1; or 2 = vigil start and vigil chat on one home
-    ProcFs,              \* /proc exists (Linux): lockHolderAlive ignores the heartbeat
+    ProcFs,              \* /proc or ps can tell the holder runs: lockHolderAlive ignores the heartbeat
     MaxStale,            \* bound: times a live holder's heartbeat goes stale
-    ChannelMayBeMissing, \* a channel can fail to start (daemon.ts:228-236)
+    ChannelMayBeMissing, \* a channel can fail to start (daemon.ts:234-242)
     ChannelMayHang,      \* channel.send can never settle
     AmbiguousFailures    \* channel.send can throw after the message went out
 
@@ -111,18 +114,18 @@ DaemonOf(p) == IF Daemons = 1 THEN 1 ELSE p
 ChanStates == IF ChannelMayBeMissing THEN BOOLEAN ELSE {TRUE}
 
 \* services.ts:98-101: the ticket is ref.id for ref.kind "ticket", else opts.ticketId (ask_owner
-\* passes it, tools.ts:337).  sessions.ts:105: a worker's approval ask ("approval") carries the
-\* ticket's key; a ticket helper's ask ("helper-approval", delegate.ts:30-39) has none.
-\* notifier.ts:190 and daemon.ts:338/496/603 pass no orderKey.
-TicketOf(g) == IF Items[g].kind \in {"ticket", "attention", "approval"} THEN Items[g].ticket ELSE NoKey
+\* passes it, tools.ts:341).  sessions.ts:105: the approval ask of a worker ("approval") and of a
+\* ticket's helper session ("helper-approval", delegate.ts:40-41) carries the ticket's key.
+\* notifier.ts:190 and daemon.ts:344/504/611 pass no orderKey.
+TicketOf(g) == IF Items[g].kind \in {"ticket", "attention", "approval", "helper-approval"} THEN Items[g].ticket ELSE NoKey
 CallerKey(g) == TicketOf(g)
-\* outbox.ts:60: item.orderKey, else `split:${now}:${Math.random()}` when split() made several parts, else null
+\* outbox.ts:62: item.orderKey, else `split:${now}:${Math.random()}` when split() made several parts, else null
 OutboxKey(g) == IF CallerKey(g) # NoKey THEN CallerKey(g)
                 ELSE IF Items[g].parts > 1 THEN "split:" \o Items[g].name ELSE NoKey
-\* outbox.ts:138: if (row.ref_kind && row.ref_id). Every caller passes a ref.
+\* outbox.ts:141: if (row.ref_kind && row.ref_id). Every caller passes a ref.
 HasRef(r) == Items[Grp[r]].kind # "none"
 
-NoFlags == [ord |-> FALSE, split |-> FALSE, splitBA |-> FALSE, gap |-> FALSE, tkt |-> FALSE]
+NoFlags == [ord |-> FALSE, split |-> FALSE, splitBA |-> FALSE, gap |-> FALSE, tkt |-> FALSE, nolock |-> FALSE]
 IdlePass == [ph |-> "idle", todo |-> <<>>, cur |-> 0, att |-> 0, fl |-> NoFlags]
 
 VARIABLES
@@ -192,7 +195,8 @@ FlagsFor(j) == [
     split   |-> \E i \in Rows : i < j /\ SameSplit(i, j) /\ Waiting(i) /\ ~Exempt(i),
     splitBA |-> \E i \in Rows : i < j /\ SameSplit(i, j) /\ Waiting(i) /\ status[i] # "dropped",
     gap     |-> \E i \in Rows : i < j /\ SameSplit(i, j) /\ Waiting(i) /\ status[i] = "dropped",
-    tkt     |-> \E i \in Rows : i < j /\ SameTicket(i, j) /\ Waiting(i) /\ ~Exempt(i)]
+    tkt     |-> \E i \in Rows : i < j /\ SameTicket(i, j) /\ Waiting(i) /\ ~Exempt(i),
+    nolock  |-> FALSE]   \* set in SegmentWithR: the sending daemon does not hold the lock
 Entry(p, how) == [row |-> pass[p].cur, how |-> how] @@ pass[p].fl
 OrphanEntry(o) == [row |-> o.row, how |-> "timeout"] @@ o.fl
 
@@ -215,7 +219,7 @@ EnqueueWith(Key(_)) ==
     /\ UNCHANGED lockVars
 
 (***************************************************************************)
-(* Outbox.heldBack (outbox.ts:104-113): an earlier row with the same key   *)
+(* Outbox.heldBack (outbox.ts:109-118): an earlier row with the same key   *)
 (* that is pending/failing and has fewer than BLOCKING_ATTEMPTS attempts.*)
 (* Read fresh from the DB, not from the pass's snapshot.                   *)
 (***************************************************************************)
@@ -224,17 +228,19 @@ HeldBackWith(r, Blocks(_)) ==
     okey[r] # NoKey /\ \E i \in Rows : i < r /\ okey[i] = okey[r] /\ Blocks(i)
 
 (***************************************************************************)
-(* The deliverDue loop from `todo` up to its next await (outbox.ts:94-96). *)
+(* The deliverDue loop from `todo` up to its next await (outbox.ts:96-101).*)
 (* Skips held rows, then either: sendOne finds no channel (UPDATE          *)
-(* next_attempt_at = now + 60 s, return false, outbox.ts:118-121) and      *)
+(* next_attempt_at = now + 60 s, return false, outbox.ts:123-127) and      *)
 (* deliverDue awaits it; or channel.send is called and awaited             *)
-(* (outbox.ts:126); or the loop ends and `finally` clears `running`        *)
-(* (outbox.ts:98-100).  The row sent is the snapshot row: its status is    *)
+(* (outbox.ts:131); or the loop ends and `finally` clears `running`        *)
+(* (outbox.ts:103-105).  The row sent is the snapshot row: its status is   *)
 (* not read again.                                                         *)
 (***************************************************************************)
-SegmentWith(p, todo, Blocks(_)) ==
+\* Recheck: `if (!this.mayDeliver()) break;` before each row (outbox.ts:99).  Nothing changes the lock
+\* inside one step, so the check before each row of this stretch is the same check.
+SegmentWithR(p, todo, Blocks(_), Recheck) ==
     LET free == {k \in DOMAIN todo : ~HeldBackWith(todo[k].row, Blocks)} IN
-    IF free = {} THEN
+    IF free = {} \/ (Recheck /\ todo # <<>> /\ lock # DaemonOf(p)) THEN
         /\ pass' = [pass EXCEPT ![p] = IdlePass]
         /\ UNCHANGED due
     ELSE
@@ -245,41 +251,44 @@ SegmentWith(p, todo, Blocks(_)) ==
             /\ due' = [due EXCEPT ![e.row] = FALSE]
             /\ pass' = [pass EXCEPT ![p] = [IdlePass EXCEPT !.ph = "returned", !.todo = rest]]
         ELSE
-            /\ pass' = [pass EXCEPT ![p] = [ph |-> "sending", todo |-> rest, cur |-> e.row,
-                                            att |-> e.att, fl |-> FlagsFor(e.row)]]
+            /\ pass' = [pass EXCEPT ![p] = [ph |-> "sending", todo |-> rest, cur |-> e.row, att |-> e.att,
+                                            fl |-> [FlagsFor(e.row) EXCEPT !.nolock = (lock # DaemonOf(p))]]]
             /\ UNCHANGED due
+SegmentWith(p, todo, Blocks(_)) == SegmentWithR(p, todo, Blocks, TRUE)
 
 \* deliverDue(): `if (this.running || !this.mayDeliver()) return 0` (outbox.ts:88): `running` is per
-\* Outbox object, i.e. per process; mayDeliver is holdsLock() (daemon.ts:221), read at pass start only.
+\* Outbox object, i.e. per process; mayDeliver is holdsLock() (daemon.ts:227), read at pass start and before each row.
 Running(p) == \E q \in Slots : DaemonOf(q) = DaemonOf(p) /\ pass[q].ph # "idle"
-CodeSelected(r) == status[r] \in {"pending", "failing"}           \* outbox.ts:91
+CodeSelected(r) == status[r] \in {"pending", "failing"}           \* outbox.ts:93
 Snapshot(Selected(_)) ==
     LET ids == SelectSeq([r \in 1..NRows |-> r], LAMBDA r : Selected(r) /\ due[r])   \* ORDER BY id
     IN [k \in DOMAIN ids |-> [row |-> ids[k], att |-> attempts[ids[k]]]]
 
-PassStartWith(p, Guarded, Selected(_), Blocks(_)) ==
+PassStartWithR(p, Guarded, Selected(_), Blocks(_), Recheck) ==
     /\ Alive(p) /\ pass[p].ph = "idle"
     /\ lock = DaemonOf(p)                      \* mayDeliver()
     \* With one process the slots are interchangeable: use the lowest free one.
     /\ Daemons = 1 => \A q \in Slots : q < p => pass[q].ph # "idle"
     /\ Guarded => ~Running(p)
-    /\ SegmentWith(p, Snapshot(Selected), Blocks)
+    /\ SegmentWithR(p, Snapshot(Selected), Blocks, Recheck)
     /\ UNCHANGED <<enq, status, attempts, okey, ext, refs, up, chanUp, crashes, fails, drops, timeouts, orphans, log>>
     /\ UNCHANGED lockVars
+PassStartWith(p, Guarded, Selected(_), Blocks(_)) == PassStartWithR(p, Guarded, Selected, Blocks, TRUE)
 
-ContinueWith(p, Blocks(_)) ==        \* deliverDue resumes after `await this.sendOne(row)`
+ContinueWithR(p, Blocks(_), Recheck) ==        \* deliverDue resumes after `await this.sendOne(row)`
     /\ Alive(p) /\ pass[p].ph = "returned"
-    /\ SegmentWith(p, pass[p].todo, Blocks)
+    /\ SegmentWithR(p, pass[p].todo, Blocks, Recheck)
     /\ UNCHANGED <<enq, status, attempts, okey, ext, refs, up, chanUp, crashes, fails, drops, timeouts, orphans, log>>
     /\ UNCHANGED lockVars
+ContinueWith(p, Blocks(_)) == ContinueWithR(p, Blocks, TRUE)
 
 Returned(p) == [pass EXCEPT ![p] = [IdlePass EXCEPT !.ph = "returned", !.todo = pass[p].todo]]
 
 (***************************************************************************)
-(* sendOne after its await settles (outbox.ts:126-166).                    *)
+(* sendOne after its await settles (outbox.ts:131-173).                    *)
 (***************************************************************************)
 \* Success: one Db.tx sets status 'sent', external_id, attempts = attempts + 1 (the DB value),
-\* and writes message_refs (outbox.ts:134-146).  Atomic = FALSE is the mutant without the tx.
+\* and writes message_refs (outbox.ts:139-151).  Atomic = FALSE is the mutant without the tx.
 SucceedWith(p, Atomic) ==
     LET r == pass[p].cur
         d == Len(log) + 1 IN
@@ -296,7 +305,7 @@ SucceedWith(p, Atomic) ==
     /\ UNCHANGED <<enq, due, okey, up, chanUp, crashes, fails, drops, timeouts, orphans>>
     /\ UNCHANGED lockVars
 
-\* The transient-error UPDATE (outbox.ts:155-164): attempts = row.attempts + 1 from the SNAPSHOT
+\* The transient-error UPDATE (outbox.ts:160-171): attempts = row.attempts + 1 from the SNAPSHOT
 \* row, status 'failing' once it reaches BLOCKING_ATTEMPTS, next_attempt_at = now + backoff.
 RetryLater(p) ==
     LET r == pass[p].cur
@@ -315,7 +324,7 @@ FailTransient(p) ==
     /\ UNCHANGED <<enq, okey, ext, refs, up, chanUp, crashes, drops, timeouts, orphans>>
     /\ UNCHANGED lockVars
 
-\* PermanentSendError: status 'dropped' (outbox.ts:150-154).
+\* PermanentSendError: status 'dropped' (outbox.ts:155-159).
 FailPermanent(p) ==
     LET r == pass[p].cur IN
     /\ Alive(p) /\ pass[p].ph = "sending" /\ drops < MaxDrops
@@ -327,7 +336,7 @@ FailPermanent(p) ==
 
 SendReturns(p) == SucceedWith(p, TRUE) \/ FailTransient(p) \/ FailPermanent(p)
 
-\* The channel will never answer this attempt (outbox.ts:124-125's case).  Leaves budget for the
+\* The channel will never answer this attempt (outbox.ts:129-130's case).  Leaves budget for the
 \* timeout so it can always fire.
 Hang(p) ==
     /\ ChannelMayHang /\ Alive(p) /\ pass[p].ph = "sending" /\ timeouts < MaxTimeouts
@@ -336,7 +345,7 @@ Hang(p) ==
                    timeouts, orphans, log>>
     /\ UNCHANGED lockVars
 
-\* withTimeout rejects after SEND_TIMEOUT_MS (outbox.ts:184-201): the transient-error path.  The
+\* withTimeout rejects after SEND_TIMEOUT_MS (outbox.ts:191-208): the transient-error path.  The
 \* channel.send promise is not cancelled: it stays in `orphans` and may still deliver.
 TimeoutFires(p) ==
     /\ Alive(p) /\ pass[p].ph \in {"sending", "hung"} /\ timeouts < MaxTimeouts
@@ -401,7 +410,7 @@ Crash ==
     /\ UNCHANGED <<enq, status, attempts, due, okey, ext, refs, chanUp, fails, drops, timeouts>>
     /\ UNCHANGED lockVars
 
-\* systemd Restart=always; Daemon.start (daemon.ts:218-266) takes the dead pid's lock, re-creates
+\* systemd Restart=always; Daemon.start (daemon.ts:224-272) takes the dead pid's lock, re-creates
 \* the Outbox with running = false and drops channels that fail to start.  The outbox table is
 \* untouched.
 Restart ==
@@ -412,11 +421,11 @@ Restart ==
     /\ UNCHANGED lockVars
 
 (***************************************************************************)
-(* The lock, Daemons = 2 (daemon.ts:63-76, 190-216, 221, 251, 898).        *)
+(* The lock, Daemons = 2 (daemon.ts:63-82, 196-222, 227, 257, 932).        *)
 (***************************************************************************)
-\* lockHolderAlive: the holder's pid runs node/vigil (/proc), or without /proc its heartbeat is fresh.
+\* lockHolderAlive: the holder's pid runs node/vigil (/proc, else ps), or, with neither, its heartbeat is fresh.
 HolderAlive == lock # 0 /\ proc[lock] = "running" /\ (ProcFs \/ fresh)
-\* `if (lock && lock.pid !== process.pid && lockHolderAlive(lock)) throw` (daemon.ts:196)
+\* `if (lock && lock.pid !== process.pid && lockHolderAlive(lock)) throw` (daemon.ts:202)
 Refuses(d) == lock # 0 /\ lock # d /\ HolderAlive
 LockFree == UNCHANGED <<enq, status, attempts, due, okey, ext, refs, up, chanUp, crashes, fails, drops, timeouts, pass, orphans, log>>
 \* takeLock: getKv, check, setKv in one Db.tx (BEGIN IMMEDIATE): one step even across processes.
@@ -437,7 +446,7 @@ WriteLock(d) ==
     /\ proc[d] = "checked"
     /\ proc' = [proc EXCEPT ![d] = "running"] /\ lock' = d /\ fresh' = TRUE
     /\ UNCHANGED stale /\ LockFree
-\* heartbeatLock every 30 s (daemon.ts:209-216): still mine -> refresh the row; lost it -> stop().
+\* heartbeatLock every 30 s (daemon.ts:215-222): still mine -> refresh the row; lost it -> stop().
 \* Recheck = FALSE is the mutant that only refreshes (the code before 4f5ff60).  stop() closes the
 \* DB under any send in flight: like a crash for that send (the copy may be out, nothing records it).
 HeartbeatWith(d, Recheck) ==
@@ -507,6 +516,9 @@ TicketMessagesInOrder == \A k \in DOMAIN log : ~log[k].tkt
 \* 90 s timeout), the owner gets each message at most once.
 AtMostOnceWithoutCrashOrTimeout ==
     \A r \in Rows : Cardinality({k \in DOMAIN log : log[k].row = r /\ log[k].how \notin {"crash", "timeout"}}) <= 1
+\* With two daemons: a daemon starts a send only while it holds the lock (outbox.ts:88, 99).  The
+\* send already in flight when the lock moves is not covered (see NoPidCheckInFlightResend).
+SendsOnlyWithLock == \A k \in DOMAIN log : ~log[k].nolock
 \* Every delivery that vigil recorded as sent, of a message with a ref, has its message_refs row
 \* (so a reply to it is routed), except a write the current step has still to make (mutant only).
 RefPending(k) == \E p \in Slots : pass[p].ph = "ref" /\ ext[pass[p].cur] = k
@@ -534,18 +546,18 @@ EveryCopyRoutable == \A k \in DOMAIN log : HasRef(log[k].row) => k \in refs
 (* ticket is the ticket the message belongs to ("none" if none); parts is  *)
 (* split()'s count.                                                        *)
 (***************************************************************************)
-\* Ticket T: ask_owner's question (tools.ts:337), then its "blocked" report (tools.ts:305);
+\* Ticket T: ask_owner's question (tools.ts:341), then its "blocked" report (tools.ts:309);
 \* then one long concierge reply in two parts.
 MainItems == <<
     [name |-> "question", kind |-> "attention", ticket |-> "T", parts |-> 1],
     [name |-> "blocked",  kind |-> "ticket",    ticket |-> "T", parts |-> 1],
     [name |-> "reply",    kind |-> "reply",     ticket |-> "none", parts |-> 2] >>
 \* Ticket T asks a question, then a risky tool call asks for approval in T's chat
-\* (sessions.ts:94-108, workers.ts:106-108).
+\* (sessions.ts:94-108, workers.ts:111-113).
 ApprovalItems == <<
     [name |-> "question", kind |-> "attention", ticket |-> "T", parts |-> 1],
     [name |-> "approve",  kind |-> "approval",  ticket |-> "T", parts |-> 1] >>
-\* The same, but the approval ask comes from the ticket's helper session (delegate.ts:30-39).
+\* The same, but the approval ask comes from the ticket's helper session (delegate.ts:31-44).
 HelperItems == <<
     [name |-> "question", kind |-> "attention",       ticket |-> "T", parts |-> 1],
     [name |-> "approve",  kind |-> "helper-approval", ticket |-> "T", parts |-> 1] >>
