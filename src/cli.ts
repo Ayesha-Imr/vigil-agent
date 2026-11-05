@@ -189,14 +189,15 @@ function status(p: Paths): void {
 	console.log(`mode ${cfg.proactive.mode}${kv("paused") === true ? " · PAUSED" : ""} · interrupts ${used}/${cfg.attention.maxInterruptsPerDay} today · ${waiting} waiting for the digest`);
 	const open = all("SELECT id, stage, title FROM tickets WHERE status = 'open' ORDER BY created_at");
 	console.log(`open tickets: ${open.length}`);
-	for (const t of open) console.log(`  ${t.id} [${t.stage}] ${t.title}`);
+	for (const t of open) console.log(`  ${t.id} [${t.stage}] ${String(t.title).replace(/[\u0000-\u001f\u007f-\u009f]/g, "")}`);
 	const approvals = all("SELECT id, tool, reason FROM approvals WHERE status = 'pending'");
 	if (approvals.length) console.log(`approvals waiting: ${approvals.map((a) => `${a.id} ${a.tool} (${a.reason})`).join(", ")}`);
 	const next = all("SELECT name, next_run_at FROM jobs WHERE enabled = 1 AND next_run_at IS NOT NULL ORDER BY next_run_at LIMIT 3");
 	if (next.length) console.log(`next: ${next.map((j) => `${j.name} ${new Date(Number(j.next_run_at)).toLocaleString("en-GB", { timeZone: cfg.owner.timezone, weekday: "short", hour: "2-digit", minute: "2-digit" })}`).join(" · ")}`);
 	console.log("recent:");
 	for (const e of all("SELECT at, kind, text FROM events ORDER BY id DESC LIMIT 12").reverse()) {
-		console.log(`  ${new Date(Number(e.at)).toLocaleTimeString("en-GB", { timeZone: cfg.owner.timezone })} ${e.kind}: ${e.text}`);
+		// Event text can carry strangers' display names: never print terminal escape codes.
+		console.log(`  ${new Date(Number(e.at)).toLocaleTimeString("en-GB", { timeZone: cfg.owner.timezone })} ${e.kind}: ${String(e.text).replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g, "")}`);
 	}
 	db.close();
 }

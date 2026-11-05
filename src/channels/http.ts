@@ -143,17 +143,25 @@ export class HttpServer {
 			write(res, other ? { status: 405, body: { error: "method not allowed" } } : { status: 404, body: { error: "not found" } });
 			return;
 		}
+		const expected = this.opts.token;
+		const given = requestToken(req.headers, url.searchParams);
+		const authed = expected !== undefined && expected !== "" && given !== undefined && safeEqual(given, expected);
+		// Check the token before reading the body: an unauthenticated client must not make the server
+		// buffer a megabyte per connection. Routes that authenticate themselves (signed buttons) get a
+		// small body only.
+		if (!authed && !(expected && route.allowUnauthenticated)) {
+			write(res, expected ? { status: 401, body: { error: "unauthorized" } } : { status: 503, body: { error: "http token not configured" } });
+			req.resume();
+			return;
+		}
 		let body: unknown;
 		try {
-			body = await readBody(req);
+			body = await readBody(req, authed ? undefined : 4096);
 		} catch (err) {
 			write(res, { status: 400, body: { error: errorText(err) } });
 			return;
 		}
 		const request: HttpRequest = { method, path: url.pathname, query: url.searchParams, headers: req.headers, body, raw: req };
-		const expected = this.opts.token;
-		const given = requestToken(req.headers, url.searchParams);
-		const authed = expected !== undefined && expected !== "" && given !== undefined && safeEqual(given, expected);
 		if (!authed && !(expected && route.allowUnauthenticated?.(request))) {
 			write(res, expected ? { status: 401, body: { error: "unauthorized" } } : { status: 503, body: { error: "http token not configured" } });
 			return;
@@ -174,13 +182,13 @@ function write(res: ServerResponse, r: HttpResponse): void {
 	}
 }
 
-async function readBody(req: IncomingMessage): Promise<unknown> {
+async function readBody(req: IncomingMessage, max = MAX_BODY_BYTES): Promise<unknown> {
 	const chunks: Buffer[] = [];
 	let size = 0;
 	for await (const chunk of req) {
 		const buf = chunk as Buffer;
 		size += buf.length;
-		if (size > MAX_BODY_BYTES) throw new Error("body too large");
+		if (size > max) throw new Error("body too large");
 		chunks.push(buf);
 	}
 	if (size === 0) return undefined;

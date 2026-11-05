@@ -464,6 +464,13 @@ export class Daemon {
 	/** Every inbound message: store, gate, route. */
 	async onInbound(msg: InboundMessage): Promise<void> {
 		const s = this.s;
+		// Strangers are dropped before anything is stored: a flood must not fill the disk. Only a
+		// /pair attempt from a stranger goes on (tryPair checks and rate-limits it).
+		const pairing = msg.kind === "message" && /^\s*\/pair\b/i.test(msg.text ?? "");
+		if (!pairing && !isOwner(s.cfg, msg.channel, msg.senderId)) {
+			this.dropStranger(msg);
+			return;
+		}
 		const ins = s.db.run(
 			`INSERT INTO triggers (source, external_id, kind, strength, payload, created_at) VALUES (?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(source, external_id) DO NOTHING`,
@@ -487,12 +494,7 @@ export class Daemon {
 			return;
 		}
 		if (!isOwner(s.cfg, msg.channel, msg.senderId)) {
-			// One log line per stranger per hour: a flood must not fill the database.
-			const key = `${msg.channel}:${msg.senderId}`;
-			if ((this.droppedAt.get(key) ?? 0) < s.clock.now() - 3_600_000) {
-				this.droppedAt.set(key, s.clock.now());
-				s.db.event("gate.dropped", `${msg.channel} message from non-owner ${msg.senderId} (${msg.senderName ?? "?"})`);
-			}
+			this.dropStranger(msg);
 			done("dropped", "not the owner");
 			return;
 		}
@@ -603,9 +605,9 @@ export class Daemon {
 		saveConfig(s.cfg, s.paths);
 		s.db.setKv(`pair:${msg.channel}`, null);
 		this.channels.get(msg.channel)?.setOwner?.(msg.senderId);
-		s.db.event("pair", `paired ${msg.channel} owner ${msg.senderId} (${msg.senderName ?? "?"})`);
+		s.db.event("pair", `paired ${msg.channel} owner ${plain(msg.senderId)} (${plain(msg.senderName ?? "?")})`);
 		// Tell the owner's other channels: a pairing they did not make is the first sign of trouble.
-		s.notifier.notify({ urgency: "high", topic: "vigil:pairing", text: `New owner identity paired on ${msg.channel}: ${msg.senderName ?? msg.senderId}. If this was not you, stop vigil and remove it from config.json.` });
+		s.notifier.notify({ urgency: "high", topic: "vigil:pairing", text: `New owner identity paired on ${msg.channel}: ${plain(msg.senderName ?? msg.senderId)}. If this was not you, stop vigil and remove it from config.json.` });
 		s.outbox.enqueue({ channel: msg.channel, conversation: msg.conversation, text: `Paired. You're vigil's owner on ${msg.channel}. Say hi, or /help.`, ref: { kind: "reply", id: msg.externalId } });
 		void s.outbox.deliverDue();
 		return true;
@@ -613,6 +615,19 @@ export class Daemon {
 
 	private readonly pairFailures = new Map<ChannelId, number>();
 	private readonly droppedAt = new Map<string, number>();
+
+	/** One log line per stranger per hour; the map of strangers seen is bounded. */
+	private dropStranger(msg: InboundMessage): void {
+		const now = this.s.clock.now();
+		const key = `${msg.channel}:${msg.senderId}`;
+		if ((this.droppedAt.get(key) ?? 0) >= now - 3_600_000) return;
+		if (this.droppedAt.size >= 1000) {
+			for (const [k, at] of this.droppedAt) if (at < now - 3_600_000) this.droppedAt.delete(k);
+			if (this.droppedAt.size >= 1000) return; // a flood of distinct ids: stop logging them
+		}
+		this.droppedAt.set(key, now);
+		this.s.db.event("gate.dropped", `${msg.channel} message from non-owner ${plain(msg.senderId)} (${plain(msg.senderName ?? "?")})`);
+	}
 
 	/**
 	 * Print a pairing code for every chat channel that has no owner yet: 10 random base32
@@ -695,6 +710,14 @@ export class Daemon {
 
 	/** Slash commands work without a model, so they work when providers do not. */
 	private async handleCommand(text: string, to: OwnerRoute, say: (t: string) => void): Promise<boolean> {
+		// Approvals, /mode and /login change what vigil may do: over the HTTP API (which any process
+		// holding the token can call, the agent's tools included) they need channels.http.allowApprovals.
+		const httpRefused = (): boolean => {
+			if ((to.channel !== "http" && to.channel !== "ntfy") || this.s.cfg.channels.http?.allowApprovals) return false;
+			this.s.db.event("gate.http-approval-refused", `refused ${text.split(/\s/)[0]} over ${to.channel}; use a chat app or set channels.http.allowApprovals`);
+			say("That command is off over the HTTP API. Use a chat app, or set channels.http.allowApprovals.");
+			return true;
+		};
 		const s = this.s;
 		const [cmd, ...args] = text.split(/\s+/);
 		switch (cmd.toLowerCase()) {
@@ -717,6 +740,8 @@ export class Daemon {
 				return true;
 			case "/mode": {
 				const m = args[0];
+				// Like the panel's mode buttons: an HTTP token is not the owner's word (audit 3).
+				if (m && httpRefused()) return true;
 				if (m !== "off" && m !== "observe" && m !== "auto") {
 					say(`Proactive mode is ${s.cfg.proactive.mode}. Use /mode off|observe|auto.`);
 					return true;
@@ -754,11 +779,7 @@ export class Daemon {
 					return true;
 				}
 				// Same rule as the buttons: an HTTP token is not the owner's word (review finding).
-				if ((to.channel === "http" || to.channel === "ntfy") && !s.cfg.channels.http?.allowApprovals) {
-					s.db.event("gate.http-approval-refused", `refused typed ${cmd} over ${to.channel}; approve from a chat app or set channels.http.allowApprovals`);
-					say("Approvals over the HTTP API are off. Use a chat app, or set channels.http.allowApprovals.");
-					return true;
-				}
+				if (httpRefused()) return true;
 				this.handleButton(`${cmd.slice(1).toLowerCase()}:${args[0]}`, say);
 				return true;
 			}
@@ -812,6 +833,7 @@ export class Daemon {
 				say("Started a fresh conversation. Memory is kept.");
 				return true;
 			case "/login":
+				if (httpRefused()) return true;
 				void this.login(args[0] ?? "", args.slice(1).join(" "), to, say);
 				return true;
 			default:
@@ -937,3 +959,8 @@ function gitCommit(dir: string, message: string): Promise<void> {
 	})();
 }
 
+
+/** Text from outside (display names, ids) made safe to log and print: no control characters. */
+export function plain(text: string): string {
+	return text.replace(/[\u0000-\u001f\u007f-\u009f]/g, "").slice(0, 200);
+}
