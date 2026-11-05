@@ -64,6 +64,25 @@ describe("review findings", () => {
 		}
 	});
 
+	it("the notify tool refuses an expiry that is already past (trace-validation side finding)", async () => {
+		let result = "";
+		h = await harness((ctx) => {
+			if (!isConcierge(ctx)) return say("?");
+			if (ctx.lastToolResult) {
+				result = ctx.lastToolResult;
+				return say("ok");
+			}
+			return call("notify", { text: "stale news", urgency: "high", topic: "x", expires_in_hours: -5 });
+		}, (c) => {
+			c.attention.quietHours = null;
+		});
+		await h.daemon.s.notifier.tick();
+		h.daemon.concierge.enqueue({ kind: "system", tag: "job", text: "check" });
+		await h.settle();
+		expect(result).toMatch(/more than 0|Validation failed/i);
+		expect(h.daemon.s.db.all("SELECT id FROM notices")).toEqual([]);
+	});
+
 	it("a claim released after its topic was muted is recorded as dropped", async () => {
 		h = await harness(() => say("ok"));
 		const n = h.daemon.s.notifier;

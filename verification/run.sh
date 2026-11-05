@@ -6,6 +6,8 @@
 #   bash verification/run.sh --deep     also the deeper configs (a few more minutes)
 #   bash verification/run.sh --strict   also exit nonzero while any finding is open
 #   bash verification/run.sh --only governor   one spec (governor or approvals), no other agents' checks
+#   bash verification/run.sh --trace    also trace-validate the real governor.ts against the governor
+#                                       model (verification/governor/trace/check.sh, about 1 min; needs node)
 #
 # One line per check:
 #   PASS     a required config or a modeled fix (fixes/*.cfg): every rule in it holds.
@@ -23,11 +25,12 @@ JAR=$(find_jar) || exit 2
 # The other agents' check.sh scripts read the same jar.
 export TLA2TOOLS="$JAR" TLA2TOOLS_JAR="$JAR"
 OUT="$VERIFY_DIR/out"; mkdir -p "$OUT"
-deep=0; strict=0; only=""
+deep=0; strict=0; only=""; trace=0
 while [ $# -gt 0 ]; do
 	case $1 in
 		--deep) deep=1 ;;
 		--strict) strict=1 ;;
+		--trace) trace=1 ;;
 		--only) only=${2:-}; shift ;;
 		*) echo "unknown option $1"; exit 2 ;;
 	esac
@@ -85,6 +88,15 @@ for spec in "${SPECS[@]}"; do
 		esac
 	done
 done
+
+# Trace validation (--trace): random runs of the real governor.ts must be behaviors of Governor.tla,
+# and every mutant of it must be rejected.
+if [ $trace = 1 ] && { [ -z "$only" ] || [ "$only" = governor ]; }; then
+	t0=$(date +%s)
+	if bash "$VERIFY_DIR/governor/trace/check.sh" >"$OUT/governor-trace-check.out" 2>&1; then
+		line PASS "governor/trace/check.sh" "$(grep -m1 '^PASS *trace/code' "$OUT/governor-trace-check.out" | sed -E 's/^PASS +trace\/code +//; s/ \(.*//'), mutants rejected, $(( $(date +%s) - t0 ))s"
+	else line FAIL "governor/trace/check.sh" "see out/governor-trace-check.out"; failed=1; specfail[governor]=1; fi
+fi
 
 # Checks other agents own: each exits nonzero on failure.
 for other in outbox scheduler workers; do

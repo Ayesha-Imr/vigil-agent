@@ -42,9 +42,13 @@ function notifyTool(s: Services, ticketId?: string) {
 			urgency: strEnum(URGENCIES, "critical: harm within minutes; high: needed today; normal: useful soon; low: digest"),
 			topic: Type.String({ description: "A short stable topic, e.g. 'ci', 'server', 'flights'. Used for muting and dedup." }),
 			dedup_key: Type.Optional(Type.String({ description: "Same key = same news; repeats are dropped." })),
-			expires_in_hours: Type.Optional(Type.Number({ description: "Drop it if still undelivered after this long." })),
+			expires_in_hours: Type.Optional(Type.Number({ exclusiveMinimum: 0, description: "Drop it if still undelivered after this long." })),
 		}),
 		async execute(_id, p) {
+			// An expiry in the past would be delivered at once: offer() decides before any tick expires it.
+			if (p.expires_in_hours !== undefined && !(p.expires_in_hours > 0)) {
+				return { content: [{ type: "text", text: "expires_in_hours must be more than 0." }], details: {} };
+			}
 			const n = s.notifier.notify({
 				urgency: p.urgency as Urgency,
 				topic: p.topic,

@@ -38,6 +38,7 @@ the rule covered replies too, and the concierge findings below broke it). `Budge
 bash verification/run.sh --only governor          # about 1 min on 4 cores
 bash verification/run.sh --only governor --deep   # adds the deeper configs (about 4 more minutes)
 bash verification/mutate.sh governor              # every property fails on a broken variant (about 1 min)
+bash verification/governor/trace/check.sh         # trace validation of the real governor.ts (about 1 min)
 ```
 
 Needs Java 11+. `verification/lib.sh` uses `$TLA2TOOLS` if set, else downloads TLC 1.8.0
@@ -65,6 +66,36 @@ see below). The summary line is `governor: PASS (N open findings reproduce as re
   `\* expect: <rule>`, and must break that rule.
 - `chart.cfg`, `chart-view.ts`, `chart.mmd` — a one-notice config, its view, and the statechart drawn from it.
 - Mutants: `verification/mutants/governor-*.mutant`, each naming the code change it mirrors.
+- `trace/` — trace validation (below): `record.ts`, `GovernorTrace.tla` + `.cfg`, `check.sh`.
+
+## Trace validation
+
+The model check covers the model and the property test covers the code. Trace validation links
+them: `trace/record.ts` drives the real governor functions with random calls, using the model's
+discretisation (8-hour slots, every call on a slot boundary, one of `MCPolicies` as a real
+`GovernorPolicy`, a zone without DST). It writes each run as NDJSON, one line per call with the
+arguments, the notices sent and the state mapped to the model's variables. `trace/GovernorTrace.tla`
+lets TLC take only the action each line names, as a step of `Next`, and only to the logged state.
+A trace is accepted when TLC reaches its last line. The model's invariants are checked along the
+way, at larger bounds than the model check (about 50 notices, 10 days).
+
+```sh
+bash verification/governor/trace/check.sh                         # 100 traces + 6 mutants (each must be rejected)
+bash verification/governor/trace/check.sh --count 1000 --seed 5000 --no-mutants
+bash verification/governor/trace/check.sh --replay verification/out/governor-trace/code/traces/trace-0042.ndjson
+bash verification/run.sh --only governor --trace                  # model check + trace check
+```
+
+A rejected trace prints its first unmatched line: the call, its arguments, the slot, and
+`<<variable, model, code>>` for each value that differs, or "a guard of the action is false".
+Before you blame the code, consider four causes: a code bug, a model error, a mapping error in
+`record.ts` `abs()`, or wrong glue in `record.ts` (how Notifier, the concierge or the daemon call
+the function). Decide as in "Model error or bug?" below. The mapping loses ids (they become 1..N),
+text, `urgency`, `decision`, `resolvedAt`, a pruned notice's fields, `until` values past the
+bound, sub-slot timing and DST. See `verification/README.md`, "Trace validation", for the full
+list, the mutant table and the maintenance steps. When the code gains a call or a state field,
+add it to `record.ts`, `abs()`, `Do(e)`/`InNext(e)` and a `check.sh` mutant. Keep
+`GovernorTrace.cfg` `MaxTime` equal to `record.ts` `MAX_TIME`.
 
 ## Reading results
 
@@ -144,8 +175,8 @@ and look for new code that writes `GovernorState`, calls `claimForReply()`, `tak
 2. Change `Governor.tla` from the code, not from the result: one indivisible step in the code is
    one action, and the action's comment names the code. Change a property only for a promise that
    changed on purpose, and write down the old and new wording (as for `NoMuted` above).
-3. Run `bash verification/run.sh --only governor` and `bash verification/mutate.sh governor`. Every
-   mutant must still be caught; add one for each new check in the code (`verification/mutants/*.mutant`:
+3. Run `bash verification/run.sh --only governor --trace` and `bash verification/mutate.sh governor`.
+   Every recorded trace must be accepted and every mutant (model and trace) must still be caught; add one for each new check in the code (`verification/mutants/*.mutant`:
    `spec`, `run`, `config`, `check`, `kind`, `code`, then `@@@ old` / `@@@ new` / `@@@ end` blocks
    with text copied exactly from the model).
 4. Move the sync commit and the blob ids forward only after you confirm the model describes the

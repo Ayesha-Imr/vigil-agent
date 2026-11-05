@@ -12,6 +12,7 @@ bash verification/run.sh                   # everything: governor, approvals, th
 bash verification/run.sh --only governor   # one spec; also --only approvals
 bash verification/run.sh --deep            # adds the deeper configs
 bash verification/run.sh --strict          # also exit nonzero while any finding is open
+bash verification/run.sh --trace           # also trace-validate the real governor.ts (about 1 min)
 bash verification/mutate.sh                # show every property can fail (all mutants)
 bash verification/mutate.sh approvals-0    # mutants whose name starts with this
 ```
@@ -167,6 +168,94 @@ Defence in depth seen while writing mutants: `decide()`'s `expires_at > ?` is no
 property, because `consume()` re-checks expiry. Without it, a late Approve would make the owner see
 "👍 Approved" for a call that will not run.
 
+## Trace validation: runs of the real governor are behaviors of the model
+
+The model check shows that `Governor.tla` keeps the rules, and the property test shows that
+`governor.ts` keeps them, but each checks its own copy of the rules. Trace validation (Cirstea,
+Kuppe, Merz et al., "Validating Traces of Distributed Programs Against TLA+ Specifications") links
+the two: TLC checks that recorded runs of the real code are behaviors of the model. Every call the
+code made is a step the model's `Next` allows, and it leaves the same state.
+
+```sh
+bash verification/governor/trace/check.sh                    # 100 traces + 6 mutants, about 1 min on 4 cores
+bash verification/governor/trace/check.sh --count 1000 --seed 5000 --no-mutants   # longer hunt, ~7 s per 100 traces
+bash verification/governor/trace/check.sh --replay FILE.ndjson ...                # validate given traces
+bash verification/run.sh --trace                             # the same check as a step of run.sh
+```
+
+Needs Java and Node 22. The script keeps everything it writes in `out/governor-trace/`: the traces,
+`coverage.json`, TLC's output and one verdict file per trace.
+
+- `governor/trace/record.ts` drives `offer`, `tick`, `takeForReply`, `claim`, `markDelivered`,
+  `release`, `mute`, `unmute` and `penalize` from `src/core/governor.ts` with random sequences. It
+  adds the glue that Notifier and the concierge put around them: one turn at a time,
+  `release(undefined)` on restart, `dislike` as `penalize(topic, now + 7 days)`. Each run is one
+  NDJSON file. Line 1 holds the constants and the initial state. Each later line holds the call
+  and its arguments, the notices the code handed out for sending, and the state after the call,
+  mapped to the model's variables.
+- `governor/trace/GovernorTrace.tla` extends `MCGovernor` with `tr` (the trace; one TLC run checks
+  a batch of up to 100) and `l` (the last line matched). Each step takes the action the next line
+  names. Its arguments must lie in the domains `Next` quantifies over, and the model's state after
+  the step must equal the logged one. The notices the step adds to the ghost `log` must be the ones
+  the code sent. Each trace gets its own verdict, because TLC's diameter, which the paper's
+  `TraceAccepted` uses, covers the whole batch. A state that matches a trace's last line writes
+  `accepted-<tr>.json`. A state with no matching successor writes `rejected-<tr>-<line>.json`,
+  which names the call and lists each `<<variable, model, code>>` that differs. The model's
+  invariants and `FinalStable` are also checked along every trace.
+- `governor/trace/check.sh` records the traces, runs TLC and prints PASS or FAIL. For a rejected
+  trace it prints the first unmatched step. It then runs the mutants, and each must get at least
+  one trace rejected.
+
+The discretisation is the model's. One slot is 8 hours and every call falls on a slot boundary.
+The recorder picks one of the three `MCPolicies`, written as real `GovernorPolicy` objects, and
+the trace checks that the header matches one of them. Zones have no DST (UTC, Karachi, Kolkata,
+Tokyo, Bogotá), and slot 0 is local midnight. The bounds are larger than the model check's: up to
+about 50 notices, 2 topics, 4 dedup keys, a clock of up to 30 slots (10 days, so `HISTORY_MS`
+pruning happens), caller expiries of 1 to 24 slots, and mutes of 1, 2, 3 or 6 slots. One run in
+five keeps a concierge turn open for days.
+
+What the mapping loses:
+- Ids become 1..N in offer order. The notice's text, `urgency` (only `effective` is kept),
+  `decision`, `resolvedAt` and `ticketId` are not compared.
+- The code no longer holds a notice that `tick()` pruned. Its line has status `*`, and the trace
+  checks only that the model pruned it too.
+- An `until` past the clock bound becomes `MaxTime + 1`, as the model's `Until()` does. Every
+  comparison the code makes stays the same.
+- There is no timing inside a slot, no DST, and no policy outside `MCPolicies`. Notifier's
+  persistence, `checkSend()` and the outbox are not recorded. The concierge's `busy` and `peeked`
+  are the recorder's own state, standing in for the turn.
+- A call that changes nothing (`/digest` with nothing waiting, `unmute` of an unmuted topic) is a
+  stuttering step. The model has no action for it, and the trace allows the stutter only while
+  that action is disabled.
+
+At this writing the real code passes: 100 of 100 traces with the default seeds (10,497 lines,
+15 s), and 2,000 more with seeds 10000–11999 (232,390 lines, about 7 min). No divergence was found.
+The mutants, all rejected with the default seeds:
+
+| Mutant | Kind | Change | Rejected | First unmatched step |
+| --- | --- | --- | --- | --- |
+| no-gap | code | `offer()`: `spaced = true` | 6/40 | an `offer`: the code delivers, the model queues |
+| window-boundary | code | `within24h()`: `>=` for `>` | 10/40 | an `offer` exactly 3 slots after an interrupt: the code queues, the model delivers |
+| release-keeps-muted | code | `release()` ignores mutes (reverts 4d5f2c7) | 3/40 | a `restart`: the code re-queues, the model drops |
+| digest-shows-stale | code | `takeForReply()` without expire-first (reverts 99a81e7) | 6/40 | a `/digest`: the code digests a stale notice, the model expires it |
+| prune-claimed | code | `tick()` prunes claimed notices (reverts 4d5f2c7) | 4/40 | a `tick` in a turn days long: `kept` differs |
+| unlogged-mute | recorder | `mute()` runs but its line is not written | 40/40 | the next line: `mutes[t]` (or a dropped notice) is unexplained |
+
+Maintaining it:
+- Keep `MaxTime` in `GovernorTrace.cfg` equal to `MAX_TIME` in `record.ts`, and keep the recorder's
+  policies equal to `MCPolicies`. A header that matches no initial state is reported as such.
+- If the code gains a governor call, a branch or a `GovernorState` field, update the model first
+  (see the verify skill). Then add the call to `record.ts` (one call per line), the field to
+  `abs()`, the action to `Do(e)` and `InNext(e)`, and a mutant to `check.sh`.
+- If a mutant's old text is no longer in `governor.ts`, `check.sh` fails with "no longer in
+  src/core/governor.ts". Copy the new text in.
+- A rejected trace is either a bug or a model or mapping error. Replay it with `--replay`, read the
+  differing variables, and decide as the verify skill says ("Model error or bug?"). The mapping
+  (`abs()`) and the glue in `record.ts` are suspects too.
+- The trace spec reads traces with `ndJsonDeserialize` and writes verdicts with `JsonSerialize`,
+  both from the `Json` module bundled in TLC 1.8.0. `IOUtils` (`IOEnv`) is not in `tla2tools.jar`,
+  so `check.sh` passes the trace paths in a generated module, `GovernorTraceBatch.tla`.
+
 ## The statechart
 
 `governor/chart.mmd` was drawn by the vendored pstack `statechart` skill from `governor/chart.cfg`
@@ -177,7 +266,8 @@ Read results with the `/statechart` skill.
 
 ## Not covered
 
-- DST in `crossed()`, time zones, minute-level timing inside a slot.
+- DST in `crossed()`, minute-level timing inside a slot (trace validation adds fixed-offset zones,
+  but still has neither).
 - More than three notices, two tool calls, or three approval rows; policies other than those listed.
 - `checkSend()`, the outbox after `enqueue` (see `outbox/`), channel delivery, the HTTP server
   itself, how pairing codes are kept secret.
