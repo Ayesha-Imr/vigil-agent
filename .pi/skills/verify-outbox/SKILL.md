@@ -50,6 +50,49 @@ state space explode shows up instead of hanging. Expected today, all `PASS`:
 - two open findings and seven characterizations still show their violation. For these, `PASS`
   means "still reproduced", not "fine".
 
+## Trace validation (the real code against the model)
+
+The model check proves the rules for `Outbox.tla`. Trace validation checks that the real
+`outbox.ts` behaves like `Outbox.tla`:
+
+```sh
+bash verification/outbox/trace/check.sh             # 100 traces + 8 mutants, about 30 s
+bash verification/outbox/trace/check.sh --count 1000 --seed 10000 --group-size 50 --no-mutants
+bash verification/outbox/trace/check.sh --replay verification/out/outbox-trace/code/traces/g01-trace-0001.ndjson
+bash verification/run.sh --trace                    # with the governor's trace check
+```
+
+`trace/record.ts` drives a real `Outbox` on a real in-memory `Db` with a `ManualClock` and a
+scripted channel. It answers each `send()` by hand: ok, try-later, `PermanentSendError`, or the
+90 s timer fires, after which the abandoned send lands or fails. It calls `enqueue` and
+`deliverDue`, including while a pass is in flight, moves the clock, and crashes and restarts (a
+new `Outbox` on the same `Db`). It does not change `src/`: it wraps the `Db` instance's
+`run`/`tx`/`all`, the channel and `setTimeout`. Each line is one model step with the state read
+from the DB and the passes. `trace/OutboxTrace.tla` accepts a trace only if every line is a step
+of `Next` that leaves the same state and the same deliveries. Expected: every trace `PASS`, and
+every mutant (heldBack due-only, no running guard, refs outside the tx, no split key,
+pending-only, no send timeout, failing one attempt late, a recorder that drops an enqueue line)
+rejected with its first unmatched step printed.
+
+The line names and their actions: `enqueue` = `EnqueueWith`, `pass-start` = `PassStartWith`,
+`continue` = `ContinueWith`, `succeed`/`fail`/`drop`/`timeout` = `SucceedWith`/`FailTransient`/
+`FailPermanent`/`TimeoutFires`, `backoff` = `BackoffElapses`, `orphan-lands`/`orphan-fails`,
+`crash`, `restart`. `deliver-noop` (the `running` guard returned at once) is a stutter. Two code
+facts that make one code step two model steps:
+- Before the F3 fix, sendOne computed the backoff from the `now` it read before its await, so a
+  slow send wrote a retry that was already due. The trace logs `fail`/`timeout` without checking
+  that row's `due`, then `backoff` at once when the row is due; since the fix (backoff counted from
+  `this.clock.now()` after the send) that composed step is rarely taken, but it stays allowed.
+- A pass over a missing channel runs its whole loop in one macrotask. The model takes one step per
+  row; the trace logs each.
+
+A rejected trace means the code did something the model does not allow, or the mapping is wrong.
+Read the printed `<<variable, model, code>>` diff, then decide as in "Model error or bug?". The
+mapping (`abs()`, where `onSend`/`onWrite`/`onFinished` cut lines) is a suspect too. Not traced:
+the lock and two daemons, the real callers' order keys (the recorder copies them), channel
+internals, the message content, a helper's approval ask (F1c), and a send that throws after
+delivering. See verification/README.md, "Trace validation of the outbox".
+
 ## Does my change touch this?
 
 Coverage record. Sync commit: `42caa19bab6b7e27ecd57e1b6057531d94dbb08b` (the commit at
@@ -158,6 +201,9 @@ row (or the reverse).
    Never weaken a property to make a run pass.
 5. Every mutant must still fail its property. If a mutant now passes, the property no longer
    guards that code: fix the model or the mutant first.
+   Then run `verification/outbox/trace/check.sh`: the real code must still pass trace
+   validation, and its mutants must still be rejected. A new await or durable write in
+   `deliverDue`/`sendOne` also needs `trace/record.ts` and `Do(e)` in `trace/OutboxTrace.tla`.
 6. Update the line numbers in the coverage table and the state counts here, then move the sync
    commit to the new commit, only after you confirmed the model describes the code there.
 
@@ -202,6 +248,13 @@ fails, see F2d.
   /proc (macOS) `lockHolderAlive` trusts the heartbeat only (daemon.ts:73-75). After a suspend a
   second daemon takes the lock while the first still has a send in flight or rows left in its
   pass (`mayDeliver` is read at pass start only, outbox.ts:88), and both send the same row.
+
+- F3 (FIXED, regression test `F3` in test/outbox.test.ts), found by trace validation (no property breaks, so `check.sh` has no line for it): sendOne
+  computes a retry's backoff from the `now` it read before `await channel.send` (outbox.ts:122,
+  166). After a 90 s timeout the retry of attempts 1-5 (backoff 5-80 s) is due at once, so a channel
+  that keeps timing out is retried about every 93 s instead of with growing gaps. Fix:
+  `this.clock.now() + backoff`. Once it is fixed, `coverage.json` of the trace check stops counting
+  "timeout: backoff already over when written".
 
 When a fix lands: the finding's line turns `FAIL` in check.sh, which is the signal. Confirm the cfg
 now passes, move it to `fixed/` with an `expect_pass` line, add a mutant that undoes the fix, and

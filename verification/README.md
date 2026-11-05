@@ -12,7 +12,7 @@ bash verification/run.sh                   # everything: governor, approvals, th
 bash verification/run.sh --only governor   # one spec; also --only approvals
 bash verification/run.sh --deep            # adds the deeper configs
 bash verification/run.sh --strict          # also exit nonzero while any finding is open
-bash verification/run.sh --trace           # also trace-validate the real governor.ts (about 1 min)
+bash verification/run.sh --trace           # also trace-validate the real governor.ts and outbox.ts (about 2 min)
 bash verification/mutate.sh                # show every property can fail (all mutants)
 bash verification/mutate.sh approvals-0    # mutants whose name starts with this
 ```
@@ -255,6 +255,136 @@ Maintaining it:
 - The trace spec reads traces with `ndJsonDeserialize` and writes verdicts with `JsonSerialize`,
   both from the `Json` module bundled in TLC 1.8.0. `IOUtils` (`IOEnv`) is not in `tla2tools.jar`,
   so `check.sh` passes the trace paths in a generated module, `GovernorTraceBatch.tla`.
+
+## Trace validation of the outbox: runs of the real outbox are behaviors of Outbox.tla
+
+The same check for `outbox/Outbox.tla`, built the same way: NDJSON traces, `ndJsonDeserialize`,
+one verdict file per trace, a generated batch module, mutants that must be rejected. The outbox
+is asynchronous and keeps its state in SQLite. So the recorder drives a real `Outbox` on a real
+in-memory `Db`, and the trace says where the code was between its awaits.
+
+```sh
+bash verification/outbox/trace/check.sh                     # 100 traces + 8 mutants, about 30 s on 4 cores
+bash verification/outbox/trace/check.sh --count 1000 --seed 10000 --group-size 50 --no-mutants   # longer hunt
+bash verification/outbox/trace/check.sh --replay FILE.ndjson ...   # validate given traces (one scenario)
+bash verification/run.sh --trace                            # with the governor's, as a step of run.sh
+```
+
+Everything it writes goes to `out/outbox-trace/`.
+
+- `outbox/trace/record.ts` builds `new Outbox(db, clock, channels)` with `new Db(":memory:")`, a
+  `ManualClock` and a scripted channel. It does not change `src/`. It wraps the `Db` instance's
+  `run`, `tx` and `all`, the channel's `send`, and `setTimeout`, so the real `withTimeout` arms a
+  timer that the recorder fires. Each `send()` is answered by hand: success, a try-later error,
+  `PermanentSendError`, or no answer until the 90 s timer fires (the clock moves 90 s first), after
+  which the abandoned send may land or fail. Between answers the recorder calls `enqueue` and
+  `deliverDue`. It also calls `deliverDue` while a pass is in flight, which is the overlapping
+  call. It moves the clock (often to the next `next_attempt_at`), and it crashes and restarts. A
+  restart is a new `Outbox` on the same `Db`, with or without the channel. Before a crash the
+  recorder decides which in-flight and abandoned copies reached the owner. It waits for every
+  continuation (one `setImmediate`) before its next call.
+- The order key and ref of each message come from the recorder's copy of the callers' glue:
+  `sendSolicited`'s `${ticket}:${channel}:${conversation}` for ticket results and `ask_owner`, the
+  same key for a worker's approval ask, and no key for replies and notices. `split()` makes the
+  parts: the texts are built so it cuts them into the scenario's count. Each batch of 20 traces
+  shares one random scenario (Outbox.tla's `Items`): always a ticket's question and report and a
+  2-part reply, plus 1 to 4 more items (an approval ask, ticket U's report or question, a notice, a
+  3-part message with no ref, ...), in shuffled order.
+- Each line is one step of the model. The state after it is read from the DB: `status`,
+  `attempts`, `order_key` mapped to the model's key, `external_id`, `due` as `next_attempt_at <=
+  now`, and the `message_refs` external ids. It also holds the passes, from the code's own
+  `SELECT` result and from where the code called `send` or wrote: the phase, the row in flight, its
+  snapshot `attempts` and the rest of the snapshot. Then the abandoned sends, `up` and `chanUp`.
+  The line also records the deliveries the owner got in the step (row, how).
+- `outbox/trace/OutboxTrace.tla` extends `Outbox` with `tr` and `l`, like `GovernorTrace.tla`.
+  `Items` is bound to the batch's scenario. Each step takes the action the line names. The action
+  must be in `Next`'s domains, the model's state after it must equal the logged one, and the
+  entries it appends to the ghost `log` must be the logged deliveries. `Outbox.cfg`'s invariants
+  are checked along every trace too, at the traces' bounds: 4 to 16 rows, 2 passes, and
+  budgets out of reach.
+- `outbox/trace/check.sh` records, validates (one TLC run per scenario), prints the first unmatched
+  step of a rejected trace, and runs the mutants.
+
+How code steps map to model steps (each model action is one stretch of code between awaits):
+
+| Line | Model action | Where record.ts cuts it |
+| --- | --- | --- |
+| `enqueue` | `Enqueue` | `enqueue()` returns (one `Db.tx`) |
+| `pass-start` | `PassStart(p)` | `deliverDue()`'s first stretch ends: `channel.send` is called, sendOne's no-channel UPDATE is written, or the pass ends |
+| `deliver-noop` | stutter | `deliverDue()` returns at once (`this.running`). Allowed only while no `PassStart` is enabled |
+| `continue` | `Continue(p)` | after `await this.sendOne`, to the next send, no-channel UPDATE or end |
+| `succeed` / `fail` / `drop` / `timeout` | `SucceedWith(p, TRUE)` / `FailTransient` / `FailPermanent` / `TimeoutFires` | the first durable write after the send settled or its timer fired (the success `Db.tx`, or the one UPDATE) |
+| `backoff` | `BackoffElapses(r)` | the clock passed a row's `next_attempt_at` |
+| `orphan-lands` / `orphan-fails` | `OrphanLands(i)` / `OrphanFails(i)` | an abandoned send settles (the code writes nothing) |
+| `crash` / `restart` | `Crash` / `Restart` | the old `Outbox` is abandoned / a new one is built |
+
+Where the code's steps and the model's differ in size:
+- `succeed` and the `continue` that follows it are one macrotask in the code, split only by
+  microtask boundaries. So nothing the recorder does falls between them. The model allows more
+  orders there than the code does, which is safe for invariants. The same holds for a pass over
+  rows whose channel is missing: in the code the whole loop is one macrotask, and the model makes it
+  one `PassStart` plus one `Continue` per row. The trace logs each piece.
+- sendOne reads `now` before its await (outbox.ts:122) and computes the backoff from it (line 166).
+  A send that takes longer than its backoff therefore writes a retry that is due already. The model
+  gives that one write two steps at one instant: `RetryLater` (due FALSE), then
+  `BackoffElapses`. The `fail`/`timeout` line leaves that row's `due` unchecked (`state.dueAny`),
+  and a `backoff` line follows at once with the full state. Rows that come due at the same moment
+  of a clock move are one `backoff` line each, in id order, and the later rows' `due` is not
+  checked on the earlier lines.
+- `Hang` has no line: no code runs when a channel decides never to answer, and `TimeoutFires`
+  also starts from `sending`. A crash falls only between the recorder's calls. The model also lets
+  it fall between `succeed` and `continue`, where nothing durable happens.
+
+What the mapping loses:
+- The message text, buttons, `reply_to`, `silent`, `ref_kind`/`ref_id`, `last_error`, `sent_at`
+  and the `next_attempt_at` values are not compared. Only `due` is, and only the existence of a
+  `message_refs` row for an external id. External ids are the delivery's number, chosen by the
+  fake channel.
+- The callers (services.ts, sessions.ts, notifier.ts, the daemon's timers and ad hoc calls) are the
+  recorder's glue, not the real code. So are the channels (one fake channel and one conversation),
+  `split()` beyond the number of parts, and the lock (`Daemons = 1`, `mayDeliver` always true,
+  including its in-loop re-check). Neither is a helper session's approval ask (finding F1c would
+  break `TicketMessagesInOrder` and stop the batch), nor a send that throws after delivering
+  (`AmbiguousFailures`, the same code path as a try-later error).
+- The passes are the recorder's view, rebuilt from the code's `SELECT` result and its calls, not
+  read from the Outbox's private fields. The history flags (`log[k].ord` and so on) and the bound
+  counters are the model's own and are not compared.
+- A crash keeps the same `Db` object: there is no open transaction between the recorder's calls,
+  so nothing durable is lost. The old `Outbox` is abandoned, not killed, and its sends are never
+  answered.
+
+At this writing the real code passes: 100 of 100 traces with the default seeds (about 6,400
+lines, 13 s), and 1,000 more with seeds 10000-10999 in 20 scenarios (69,679 lines, 60 s). No trace was rejected. One divergence in timing is accepted by the
+composed step above, and it was a finding against the code, now fixed (F3 in the verify-outbox skill): the backoff ran from the start of the
+send, not from the failure. After a 90 s timeout, the retry of attempts 1 to 5 (backoff 5 to 80 s)
+is due at once and goes out on the next 3 s tick, so a channel that keeps timing out is retried
+about every 93 s instead of with growing gaps. With the default seeds this happened after 133 of
+136 timeouts and 103 of 308 try-later errors. Minimal fix: at outbox.ts:166, `now + backoff` becomes
+`this.clock.now() + backoff`. No model change is needed: the model's `due` abstraction already allows
+any later moment. The mutants, all rejected with the default seeds:
+
+| Mutant | Kind | Change | Rejected | First unmatched step |
+| --- | --- | --- | --- | --- |
+| heldback-due-only | code | heldBack adds `AND next_attempt_at <= now` (`MutHeldBackDueOnly`) | 18/20 | a `continue`: the code sends a row whose earlier same-key row is waiting on its backoff, the model holds it |
+| no-running-guard | code | drop `this.running \|\|` (`MutNoRunningGuard`) | 19/20 | `pass-start` in slot 2 while slot 1 is sending: the model's guard is false |
+| refs-outside-tx | code | the success writes run without `db.tx` (`MutRefOutsideTx`) | 20/20 | `succeed`: `refs` lacks the new external id |
+| no-split-key | code | `orderKey = item.orderKey ?? null` (`MutNoSplitKey`) | 20/20 | the `enqueue` of a long message: `okey` is `none`, not `split:<name>` |
+| pending-only | code | due query `status IN ('pending')` (`MutPendingOnly`) | 7/20 | a `pass-start`: the snapshot lacks a due failing row |
+| no-send-timeout | code | `await channel.send` without `withTimeout` (`MutNoSendTimeout`) | 16/20 | `timeout`: nothing happened in the code |
+| failing-one-late | code | `attempts > BLOCKING_ATTEMPTS` for `>=` (no model mutant) | 8/20 | the third `fail`: status `pending`, the model says `failing` |
+| unlogged-enqueue | recorder | the second `enqueue()` runs but is not logged | 20/20 | the next line: `enq` and two rows unexplained |
+
+Maintaining it:
+- Keep `BLOCKING_ATTEMPTS` and `MaxPasses` in `OutboxTrace.cfg` equal to `BLOCKING` and `SLOTS` in
+  `record.ts`. The recorder checks the code's `BLOCKING_ATTEMPTS` and the 90 s timer.
+- If the code gains an await, a durable write or a new branch in `deliverDue`/`sendOne`, change the
+  model first (verify-outbox skill). Then re-check where `record.ts` cuts lines (`onSend`,
+  `onWrite`, `onFinished`) and add the step to `Do(e)`/`InNext(e)`. A write, send or pass end
+  where the recorder expects none is logged as `unexplained-*`, and the trace is rejected at that
+  line.
+- A mutant whose old text is no longer in `outbox.ts` fails with "no longer in src/core/outbox.ts".
+  The mutant copies import the real `src/` modules, so the channel and the copy share one
+  `PermanentSendError`.
 
 ## The statechart
 

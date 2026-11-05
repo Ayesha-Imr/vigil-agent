@@ -8,6 +8,8 @@
 #   bash verification/run.sh --only governor   one spec (governor or approvals), no other agents' checks
 #   bash verification/run.sh --trace    also trace-validate the real governor.ts against the governor
 #                                       model (verification/governor/trace/check.sh, about 1 min; needs node)
+#                                       and the real outbox.ts against the outbox model
+#                                       (verification/outbox/trace/check.sh, about 40 s; not with --only)
 #
 # One line per check:
 #   PASS     a required config or a modeled fix (fixes/*.cfg): every rule in it holds.
@@ -96,6 +98,14 @@ if [ $trace = 1 ] && { [ -z "$only" ] || [ "$only" = governor ]; }; then
 	if bash "$VERIFY_DIR/governor/trace/check.sh" >"$OUT/governor-trace-check.out" 2>&1; then
 		line PASS "governor/trace/check.sh" "$(grep -m1 '^PASS *trace/code' "$OUT/governor-trace-check.out" | sed -E 's/^PASS +trace\/code +//; s/ \(.*//'), mutants rejected, $(( $(date +%s) - t0 ))s"
 	else line FAIL "governor/trace/check.sh" "see out/governor-trace-check.out"; failed=1; specfail[governor]=1; fi
+fi
+# The same for the real outbox.ts (on a real Db) against Outbox.tla. The outbox is another agent's
+# spec: it runs only without --only, and a failure fails run.sh like the outbox's own check.sh.
+if [ $trace = 1 ] && [ -z "$only" ]; then
+	t0=$(date +%s)
+	if bash "$VERIFY_DIR/outbox/trace/check.sh" >"$OUT/outbox-trace-check.out" 2>&1; then
+		line PASS "outbox/trace/check.sh" "$(grep -m1 '^PASS *trace/code' "$OUT/outbox-trace-check.out" | sed -E 's/^PASS +trace\/code +//; s/ \(.*//'), mutants rejected, $(( $(date +%s) - t0 ))s"
+	else line FAIL "outbox/trace/check.sh" "see out/outbox-trace-check.out"; failed=1; fi
 fi
 
 # Checks other agents own: each exits nonzero on failure.

@@ -163,7 +163,9 @@ export class Outbox {
 				"UPDATE outbox SET status = ?, attempts = ?, next_attempt_at = ?, last_error = ? WHERE id = ?",
 				attempts >= BLOCKING_ATTEMPTS ? "failing" : "pending",
 				attempts,
-				now + backoff,
+				// From when the send ended, not when it began: a slow send (up to the 90 s timeout)
+				// must not leave a retry that is already due (outbox trace finding F3).
+				this.clock.now() + backoff,
 				message,
 				row.id,
 			);

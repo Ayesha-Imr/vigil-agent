@@ -350,3 +350,18 @@ describe("the daemon lock during a pass", () => {
 		expect(tg.sent.map((m) => m.text)).toEqual(["one"]);
 	});
 });
+
+describe("retry backoff", () => {
+	it("F3: the backoff counts from when a slow send ended, so its retry is not already due", async () => {
+		const orig = tg.send.bind(tg);
+		tg.send = async (m) => {
+			clock.advance(10_000); // the send takes 10 s, longer than the first 5 s backoff
+			throw new Error("ETIMEDOUT");
+		};
+		outbox.enqueue({ channel: "telegram", conversation: "42", text: "one" });
+		await outbox.deliverDue();
+		tg.send = orig;
+		const row = db.get<{ next_attempt_at: number }>("SELECT next_attempt_at FROM outbox")!;
+		expect(row.next_attempt_at).toBeGreaterThan(clock.now());
+	});
+});
