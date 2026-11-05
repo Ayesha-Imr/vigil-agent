@@ -136,6 +136,14 @@ bounds than the model check: up to 50 notices over 10 days) and rejected all six
 divergences, including reverts of two fixes above. The default check (100 traces plus the mutants)
 runs in about a minute.
 
+The outbox has trace validation too, which is harder because it is asynchronous: a recorder
+drives the real `Outbox` on a real SQLite database with a scripted channel and a timeout it fires
+itself, and logs each step between two `await`s. 1,100 traces (about 76,000 steps, with crashes,
+overlapping passes, timeouts and missing channels) were accepted and eight mutants rejected. It
+found one defect no property catches, because the model allows any later retry time: the retry
+backoff was counted from before a slow send, so after a 90 s timeout the retry was already due and
+a channel that kept timing out was retried every 93 s instead of with growing gaps.
+
 Every defect found by model checking was replayed on the TypeScript before it was fixed, and stays
 in the suite as a passing regression check next to a mutant that undoes the fix. What remains
 open is one documented opt-in risk: with `channels.http.allowApprovals` on, anything holding the
@@ -198,6 +206,7 @@ checked by the model):
 | Workers | A crash during a ticket's first turn left no session file recorded; the restart began a new session without the owner's message | The owner's instruction silently lost |
 | Governor | A notice claimed for a reply could be pruned from the history before the reply ended | Neither told nor released |
 | Governor | A claim released after its topic was muted returned the notice to the queue | A muted topic delivered in a digest |
+| Outbox | A retry's backoff was counted from before a slow send, so after a timeout it was already due (found by trace validation) | A down channel retried every 93 s, not with growing gaps |
 | Approvals | A typed `/approve <id>` over the HTTP API passed the refusal that covered approve buttons only (also found, independently, by a code review) | The agent's own tools could approve their own calls |
 
 The mutation discipline mattered: several first drafts of the models passed trivially, and only
@@ -232,5 +241,5 @@ batching (Fitz et al. 2019) for digests over immediate delivery.
   constraints on top of the learned policy (safe exploration for notification timing).
 - An offline benchmark of notification streams with owner judgements, to compare policies
   (`vigil simulate` is the harness for it).
-- Trace validation for the outbox, scheduler and workers, which involve awaits and a database and
-  need recording inside the daemon rather than around pure functions.
+- Trace validation for the scheduler and workers, which, like the outbox, involve awaits and a
+  database and need recording between awaits rather than around pure functions.
