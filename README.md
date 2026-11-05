@@ -300,13 +300,17 @@ The parts where a bug costs the most and tests reach the least are model-checked
 | --- | --- |
 | `verification/governor` | The budget, critical cap, quiet hours, mutes and dedup always hold; no notice is lost or sent twice; every waiting notice is eventually resolved |
 | `verification/approvals` | A risky call runs only after the owner approved *that exact call* before expiry; approvals are single-use; denied or expired ones never run; a non-owner can't approve |
-| `verification/outbox` | Messages of one conversation keep their order; nothing is lost; duplicates only come from a crash between send and record |
+| `verification/outbox` | Messages of one conversation (and one ticket) keep their order; nothing is lost; duplicates only come from a crash or a send timeout; two daemons on one home never both send |
+| `verification/scheduler` | One trigger per slot; a job never overlaps itself within its lease; no slot is lost, also across a crash; "at" jobs fire once |
+| `verification/workers` | No ticket runs twice; slot limits plus one reserved slot for the owner; the owner's message is never lost silently or starved; a stopped ticket stays stopped; retries are bounded |
 
 ```bash
 vigil verify        # or: bash verification/run.sh   (needs Java)
 ```
 
-Every property has been shown to fail on a broken variant of the model (`verification/mutate.sh`).
+Every property has been shown to fail on a broken variant of the model (`verification/mutate.sh`
+and each spec's `mutants/`). The model checks found 18 real defects in the code, each replayed on the
+TypeScript and fixed; [docs/REPORT.md](docs/REPORT.md) lists them.
 The property tests in `test/` check the TypeScript against the same rules. See
 [verification/README.md](verification/README.md) for bounds and what is not covered. The
 project-local skills in `.claude/skills/` and `.pi/skills/` tell a coding agent how to rerun and

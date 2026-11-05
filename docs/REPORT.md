@@ -129,6 +129,7 @@ Defects found by the tests, the model checker and a code audit, and fixed:
 | Watchers | A page returning to an earlier state was never reported again | unit tests |
 | Scheduler | A replayed slot marked its job running with no run to complete it (held for 6 h) | unit tests |
 | Governor | Digest times in a skipped DST hour never fired; in a repeated hour they fired twice | audit, then tests |
+| Workers | Stopping the daemon left helper sessions running and writing after the database closed | writing the F1c regression test |
 | Concierge | Notices handed to a reply were marked delivered even if the reply failed | audit |
 | Tickets | Follow-ups addressed by a ticket's short name were silently lost | audit |
 | HTTP API | Concurrent requests could receive each other's replies | audit |
@@ -158,6 +159,11 @@ checked by the model):
 | Workers | No worker model plus a pending input re-ran the ticket on promise callbacks | The daemon froze at 100% CPU |
 | Outbox | A ticket's question (and its approval ask) could be overtaken by the ticket's next report | Messages out of order |
 | Outbox | Two daemons on one database each sent every message; the first lock was not atomic and could be taken from a suspended, live holder | Every message twice |
+| Outbox | A worker's helper session sent its approval ask with no order key, ahead of the ticket's pending question | Asked to approve before seeing the question |
+| Outbox | Without /proc (macOS), a daemon started after a machine suspend took the lock from a live holder, which kept sending its snapshot | A few messages twice |
+| Workers | A crash during a ticket's first turn left no session file recorded; the restart began a new session without the owner's message | The owner's instruction silently lost |
+| Governor | A notice claimed for a reply could be pruned from the history before the reply ended | Neither told nor released |
+| Governor | A claim released after its topic was muted returned the notice to the queue | A muted topic delivered in a digest |
 
 The mutation discipline mattered: several first drafts of the models passed trivially, and only
 showed their weakness when a mutant that removes a real check was *not* caught. Writing the
