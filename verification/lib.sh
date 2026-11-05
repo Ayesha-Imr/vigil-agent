@@ -1,9 +1,12 @@
 # Shared helpers for verification/run.sh and verification/mutate.sh. Source it; do not run it.
 
 VERIFY_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-TLC_VERSION=1.7.4
+# The models use TLC 1.8 (nightly) features and output; 1.7.4 cannot run them. v1.8.0 is a rolling
+# pre-release, so the checksum below pins the build the models were checked with (2026.11.03.180953)
+# and a newer build only warns.
+TLC_VERSION=1.8.0
 TLC_URL="https://github.com/tlaplus/tlaplus/releases/download/v${TLC_VERSION}/tla2tools.jar"
-TLC_SHA256=936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
+TLC_SHA256=e20447644bfabd29d6bd0fc2c0eb1473fb301c1a0e4dfe1961938ce5a191edbf
 
 # Print the path of tla2tools.jar: $TLA2TOOLS if set, else the pinned release cached in
 # verification/.tools/ (downloaded and checksummed on first use).
@@ -18,7 +21,7 @@ find_jar() {
 	fi
 	if [ -z "${TLA2TOOLS:-}" ] && command -v sha256sum >/dev/null; then
 		local got; got=$(sha256sum "$jar" | cut -d' ' -f1)
-		[ "$got" = "$TLC_SHA256" ] || { echo "checksum mismatch for $jar ($got); delete it and rerun" >&2; return 1; }
+		[ "$got" = "$TLC_SHA256" ] || echo "note: $jar is a different TLC build than the one the models were checked with ($got)" >&2
 	fi
 	echo "$jar"
 }
