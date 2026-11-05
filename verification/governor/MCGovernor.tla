@@ -28,12 +28,12 @@ ChartPolicies == {
      maxInt |-> 1, minGap |-> 1, critCap |-> 1, dedup |-> 2, expiry |-> 2]
 }
 
-\* For findings/Window*.cfg only: windows longer than what tick() keeps. The config there sets
-\* HistorySlots = 1 as a stand-in for HISTORY_MS (7 days), so dedup = 3 > HistorySlots plays a
-\* dedupWindowMinutes above 7 days, and minGap = 4 > D plays a minGapMinutes above 24 hours.
-\* src/config.ts validate() accepts both.
-MCLongWindowPolicies == {
+\* For Governor_long_expiry.cfg only. The config sets HistorySlots = 1 as a stand-in for HISTORY_MS
+\* (7 days); expiry = 2 > HistorySlots plays a notice that may wait more than 7 days (the notify
+\* tool's expires_in_hours has no upper bound); dedup = 1 stays within the history, as validate()
+\* now requires.
+LongExpiryPolicies == {
     [hasQuiet |-> FALSE, qStart |-> 0, qEnd |-> 0, digest |-> {},
-     maxInt |-> 2, minGap |-> 4, critCap |-> 1, dedup |-> 3, expiry |-> 1]
+     maxInt |-> 1, minGap |-> 1, critCap |-> 1, dedup |-> 1, expiry |-> 2]
 }
 =============================================================================

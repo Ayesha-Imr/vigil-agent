@@ -1,0 +1,11 @@
+spec: governor
+run: MCGovernor.tla
+config: Governor_concierge.cfg
+check: Conservation
+kind: invariant
+code: src/core/governor.ts: isWaiting() also counts "claimed", so tick() digests a notice a concierge turn has claimed, and the reply tells it again (finding ConciergeToldTwice comes back)
+@@@ old
+        flushed == IF digestDue \/ quietEnded THEN {m \in Notices : st1[m] \in Waiting} ELSE {}
+@@@ new
+        flushed == IF digestDue \/ quietEnded THEN {m \in Notices : st1[m] \in Waiting \cup {"claimed"}} ELSE {}
+@@@ end

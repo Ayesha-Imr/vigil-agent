@@ -4,7 +4,8 @@
 (* through src/core/notifier.ts, src/agent/concierge.ts and src/daemon.ts. *)
 (*                                                                         *)
 (* One TLA+ action per call. Each governor call is one pure function that  *)
-(* Notifier runs inside one db.tx(), so it is one indivisible step:        *)
+(* Notifier runs inside one db.tx() (or one synchronous commit), so it is  *)
+(* one indivisible step:                                                   *)
 (*                                                                         *)
 (*  Offer          offer()            Notifier.notify                      *)
 (*  Tick           tick()             Notifier.tick (daemon, every 30 s)   *)
@@ -12,14 +13,18 @@
 (*  Mute           mute()             Notifier.mute                        *)
 (*  Unmute         unmute()           Notifier.unmute                      *)
 (*  Penalize       penalize()         Notifier.dislike                     *)
-(*  ConciergePeek  waiting()          Concierge, owner message: the        *)
-(*                                    waiting notices go into the prompt   *)
-(*  ConciergeReply this.reply() then  Concierge, after the model answers:  *)
-(*                 markDelivered()    reply stored, then                   *)
-(*                                    Notifier.confirmDelivered(ids)       *)
+(*  ConciergeClaim claim()            Notifier.claimForReply, at the start *)
+(*                                    of the concierge's turn for an owner *)
+(*                                    message; the claimed notices go into *)
+(*                                    the prompt                           *)
+(*  ConciergeReply this.reply() then  the turn ends: a reply with model    *)
+(*                 markDelivered()    text is stored and confirmDelivered; *)
+(*                 or release()       otherwise releaseClaim               *)
+(*  Restart        release()          the Notifier constructor releases    *)
+(*                                    every claim; the turn is gone        *)
 (*  Advance        the wall clock moves on (Clock.now() grows)             *)
 (*                                                                         *)
-(* Between ConciergePeek and ConciergeReply the concierge awaits the model *)
+(* Between ConciergeClaim and ConciergeReply the concierge awaits the model *)
 (* (promptWithFallback), so every other action can happen in between.      *)
 (*                                                                         *)
 (* Time is discrete: one unit is a "slot" and a day (DAY in time.ts) is D  *)
@@ -49,42 +54,41 @@ CONSTANTS
     HistorySlots,  \* HISTORY_MS = 7 * DAY: tick() forgets resolved notices older than this
     CustomExpiry,  \* offsets (slots) a caller may give as NoticeInput.expiresAt; the default is pol.expiry
     Feedback,      \* TRUE: the owner's mute / unmute / dislike actions are in the model
-    Concierge,     \* TRUE: the concierge's peek-then-confirm reply path is in the model
-    ReplyOutcomes, \* subset of {"stored", "partial", "none"}: how a concierge turn can end
-    ClaimOnPeek    \* FALSE: the code as it is. TRUE: the SUGGESTED FIX (not in the code), see ConciergePeek
+    Concierge,     \* TRUE: the concierge's claim / reply path and restarts are in the model
+    ReplyOutcomes  \* subset of {"stored", "partial", "none"}: how a concierge turn can end
 
 NONE == -1          \* "no entry" in mutes / penalties (the key is absent)
 Notices == 1..N
 Urgencies == {"critical", "high", "normal", "low"}
 Waiting == {"queued", "held"}                         \* isWaiting()
 Final == {"delivered", "digested", "dropped", "expired"}
-Statuses == {"none", "telling"} \cup Waiting \cup Final  \* "none" = not offered yet;
-                                                     \* "telling" exists only with ClaimOnPeek
+Statuses == {"none", "claimed"} \cup Waiting \cup Final  \* "none" = not offered yet
 
 VARIABLES
     now,         \* Clock.now()
     lastTickAt,  \* GovernorState.lastTickAt
     pol,         \* the GovernorPolicy (fixed for a behavior)
     st,          \* Notice.status per notice id
-    nt,          \* the rest of each Notice: effective, topic, dedupKey, createdAt, expiresAt
-                 \* (Notice.urgency is not read again after offer(), so it is left out)
+    nt,          \* the rest of each Notice: effective, topic, dedupKey, createdAt, expiresAt,
+                 \* claimedFrom (Notice.urgency is not read again after offer(), so it is left out)
     kept,        \* whether the notice is still in GovernorState.notices (tick() prunes history)
     interrupts,  \* GovernorState.interrupts (delivery slots of high/normal interrupts)
     criticals,   \* GovernorState.criticals
     mutes,       \* GovernorState.mutes: topic -> until, or NONE
     penalties,   \* GovernorState.penalties: topic -> until, or NONE
     busy,        \* the concierge is in a turn for an owner message
-    peeked,      \* the notice ids that turn put into the prompt (const waiting = notifier.waiting())
+    peeked,      \* the ids that turn claimed and put into the prompt (const waiting = claimForReply())
     \* ghosts
     log,         \* every delivery to the owner: [n, at, how, muted]
-    sends,       \* how many times each notice reached the owner
+    sends,       \* how many times each notice reached the owner (stops at 2)
+    shown,       \* when a concierge turn last claimed each notice for its prompt, or NONE
     ownerMute    \* what the owner last said about each topic: muted until, or NONE
 
 vars == <<now, lastTickAt, pol, st, nt, kept, interrupts, criticals, mutes, penalties,
-          busy, peeked, log, sends, ownerMute>>
+          busy, peeked, log, sends, shown, ownerMute>>
 
-\* prev: the status a claimed notice returns to when the reply fails (ClaimOnPeek only)
-NoNotice == [eff |-> "low", topic |-> "none", key |-> "none", createdAt |-> 0, expiresAt |-> 0, prev |-> "none"]
+NoNotice == [eff |-> "low", topic |-> "none", key |-> "none", createdAt |-> 0, expiresAt |-> 0,
+             claimedFrom |-> "none"]
 
 -----------------------------------------------------------------------------
 (* Helpers, each a function of governor.ts or time.ts *)
@@ -119,12 +123,13 @@ Crossed(from, to, target) == \E k \in Max2(from + 1, to - D)..to : k % D = targe
 Lower(u) == IF u = "high" THEN "normal" ELSE IF u = "normal" THEN "low" ELSE u
 
 \* Ghost counter of how often a notice reached the owner. Every rule only asks whether it is
-\* 0, 1 or more, so it stops at 2; this keeps a reply that tells a notice again and again finite.
+\* 0, 1 or more, so it stops at 2.
 Bump(k) == Min2(k + 1, 2)
 
 MutedNow(tp) == ownerMute[tp] > now
 Delivery(n, how) == [n |-> n, at |-> now, how |-> how, muted |-> MutedNow(nt[n].topic)]
 
+\* isWaiting(n) for a notice still in state.notices
 IsWaiting(m) == kept[m] /\ st[m] \in Waiting
 
 -----------------------------------------------------------------------------
@@ -143,6 +148,7 @@ Init ==
     /\ peeked = {}
     /\ log = {}
     /\ sends = [n \in Notices |-> 0]
+    /\ shown = [n \in Notices |-> NONE]
     /\ ownerMute = [t \in Topics |-> NONE]
 
 (***************************************************************************)
@@ -155,7 +161,7 @@ Offer(n, u, tp, k, dur) ==
     /\ LET
          \* 1. muted topic
          muted == mutes[tp] # NONE /\ mutes[tp] > now
-         \* 2. duplicate of news delivered or waiting, within the dedup window
+         \* 2. duplicate of news delivered or waiting (or claimed), within the dedup window
          windowStart == now - pol.dedup
          dup == \E m \in Notices :
                   /\ kept[m]
@@ -189,7 +195,7 @@ Offer(n, u, tp, k, dur) ==
        IN
          /\ st' = [st EXCEPT ![n] = status]
          /\ nt' = [nt EXCEPT ![n] = [eff |-> eff, topic |-> tp, key |-> k,
-                                     createdAt |-> now, expiresAt |-> now + dur, prev |-> "none"]]
+                                     createdAt |-> now, expiresAt |-> now + dur, claimedFrom |-> "none"]]
          /\ kept' = [kept EXCEPT ![n] = TRUE]
          /\ criticals' = IF branch = "critical" THEN Append(criticals, now) ELSE criticals
          /\ interrupts' = IF branch = "interrupt" THEN Append(interrupts, now) ELSE interrupts
@@ -197,7 +203,7 @@ Offer(n, u, tp, k, dur) ==
                      THEN log \cup {[n |-> n, at |-> now, how |-> "alone", muted |-> MutedNow(tp)]}
                      ELSE log
          /\ sends' = IF status = "delivered" THEN [sends EXCEPT ![n] = Bump(@)] ELSE sends
-         /\ UNCHANGED <<now, lastTickAt, pol, mutes, penalties, busy, peeked, ownerMute>>
+         /\ UNCHANGED <<now, lastTickAt, pol, mutes, penalties, busy, peeked, shown, ownerMute>>
 
 OfferAny ==
     \E n \in Notices, u \in Urgencies, tp \in Topics, k \in Keys, dur \in {pol.expiry} \cup CustomExpiry :
@@ -205,7 +211,8 @@ OfferAny ==
 
 (***************************************************************************)
 (* tick(): expire, then flush one digest when a digest time or the end of  *)
-(* quiet hours was crossed since lastTickAt, then prune history.           *)
+(* quiet hours was crossed since lastTickAt, then prune history. A claimed *)
+(* notice is not isWaiting(), so tick() neither expires nor flushes it.    *)
 (***************************************************************************)
 Tick ==
     LET expired == {m \in Notices : st[m] \in Waiting /\ nt[m].expiresAt <= now}
@@ -220,7 +227,8 @@ Tick ==
         st2 == [m \in Notices |-> IF m \in flushed THEN "digested" ELSE st1[m]]
     IN
         /\ st' = st2
-        /\ kept' = [m \in Notices |-> kept[m] /\ (st2[m] \in Waiting \cup {"telling"} \/ nt[m].createdAt > now - HistorySlots)]
+        \* notices.filter((n) => isWaiting(n) || n.status === "claimed" || n.createdAt > now - HISTORY_MS)
+        /\ kept' = [m \in Notices |-> kept[m] /\ (st2[m] \in Waiting \cup {"claimed"} \/ nt[m].createdAt > now - HistorySlots)]
         /\ interrupts' = SelectSeq(interrupts, LAMBDA t : t > now - D)
         /\ criticals' = SelectSeq(criticals, LAMBDA t : t > now - D)
         /\ mutes' = [t \in Topics |-> IF mutes[t] # NONE /\ mutes[t] > now THEN mutes[t] ELSE NONE]
@@ -228,77 +236,101 @@ Tick ==
         /\ lastTickAt' = now
         /\ log' = log \cup {Delivery(m, "digest") : m \in flushed}
         /\ sends' = [m \in Notices |-> IF m \in flushed THEN Bump(sends[m]) ELSE sends[m]]
-        /\ UNCHANGED <<now, pol, nt, busy, peeked, ownerMute>>
+        /\ UNCHANGED <<now, pol, nt, busy, peeked, shown, ownerMute>>
 
-(* /digest: takeForReply() flushes every waiting notice and the daemon says them, in one call. *)
+(* /digest: takeForReply() expires stale waiting notices first, then flushes the rest, and the
+   daemon says them, in one call. *)
 DigestCommand ==
-    LET flushed == {m \in Notices : IsWaiting(m)}
-    IN /\ flushed # {}
-       /\ st' = [m \in Notices |-> IF m \in flushed THEN "digested" ELSE st[m]]
-       /\ log' = log \cup {Delivery(m, "reply") : m \in flushed}
+    LET stale == {m \in Notices : IsWaiting(m) /\ nt[m].expiresAt <= now}
+        flushed == {m \in Notices : IsWaiting(m) /\ m \notin stale}
+    IN /\ stale \cup flushed # {}
+       /\ st' = [m \in Notices |-> IF m \in flushed THEN "digested"
+                                   ELSE IF m \in stale THEN "expired" ELSE st[m]]
+       /\ log' = log \cup {Delivery(m, "command") : m \in flushed}
        /\ sends' = [m \in Notices |-> IF m \in flushed THEN Bump(sends[m]) ELSE sends[m]]
        /\ UNCHANGED <<now, lastTickAt, pol, nt, kept, interrupts, criticals, mutes, penalties,
-                      busy, peeked, ownerMute>>
+                      busy, peeked, shown, ownerMute>>
 
-(* Concierge, owner message: const waiting = this.s.notifier.waiting(); the list goes into the
-   prompt, then the turn awaits the model. Nothing in GovernorState changes.
-   SUGGESTED FIX (ClaimOnPeek): claim the notices instead, status "telling", which tick(),
-   takeForReply() and mute() leave alone because it is not isWaiting(). *)
-ConciergePeek ==
+(* Concierge, owner message: const waiting = this.s.notifier.claimForReply() -> claim(): every
+   waiting, unexpired notice becomes "claimed" (claimedFrom = its status); the list goes into the
+   prompt, then the turn awaits the model. *)
+ConciergeClaim ==
     /\ Concierge
     /\ ~busy
-    /\ busy' = TRUE
-    /\ peeked' = {m \in Notices : IsWaiting(m)}
-    /\ IF ClaimOnPeek
-         THEN /\ st' = [m \in Notices |-> IF IsWaiting(m) THEN "telling" ELSE st[m]]
-              /\ nt' = [m \in Notices |-> IF IsWaiting(m) THEN [nt[m] EXCEPT !.prev = st[m]] ELSE nt[m]]
-         ELSE UNCHANGED <<st, nt>>
+    /\ LET c == {m \in Notices : IsWaiting(m) /\ nt[m].expiresAt > now}
+       IN /\ busy' = TRUE
+          /\ peeked' = c
+          /\ st' = [m \in Notices |-> IF m \in c THEN "claimed" ELSE st[m]]
+          /\ nt' = [m \in Notices |-> IF m \in c THEN [nt[m] EXCEPT !.claimedFrom = st[m]] ELSE nt[m]]
+          /\ shown' = [m \in Notices |-> IF m \in c THEN now ELSE shown[m]]
     /\ UNCHANGED <<now, lastTickAt, pol, kept, interrupts, criticals, mutes, penalties,
                    log, sends, ownerMute>>
 
-(* Concierge, the model answered. outcome:
-     "stored"  : a reply without error: this.reply(input, out) stores it, and then
-                 confirmDelivered(waiting ids) -> markDelivered() marks those still waiting;
-     "partial" : r.error with some text: the reply is stored but nothing is confirmed;
-     "none"    : no text, or a SILENT answer: nothing is sent, nothing confirmed.
+\* release(state, ids, now): every claimed notice among ids (still in state.notices) waits again,
+\* as it was, unless its topic is muted now: then it is dropped (drop:muted), as mute() would have.
+Released(ids) == {m \in ids : kept[m] /\ st[m] = "claimed"}
+StAfterRelease(ids) ==
+    [m \in Notices |-> IF m \in Released(ids)
+                        THEN IF mutes[nt[m].topic] # NONE /\ mutes[nt[m].topic] > now
+                               THEN "dropped"                \* (state.mutes[n.topic] ?? 0) > now
+                               ELSE nt[m].claimedFrom        \* n.claimedFrom ?? "queued"
+                        ELSE st[m]]
+\* both release() and markDelivered() clear claimedFrom
+NtClear(ids) == [m \in Notices |-> IF m \in ids THEN [nt[m] EXCEPT !.claimedFrom = "none"] ELSE nt[m]]
+
+(* Concierge, the turn ends. outcome:
+     "stored"  : the model wrote text, without error: this.reply(input, out) stores it, then
+                 confirmDelivered(ids) -> markDelivered();
+     "partial" : the model wrote text but r.error is set: the same (a stored reply counts as told);
+     "none"    : no text (the error message is sent, without the notices) or a SILENT answer:
+                 releaseClaim(ids) -> release().
    Assumption: a stored reply tells the owner every notice the prompt listed. *)
 ConciergeReply(outcome) ==
     /\ busy
     /\ busy' = FALSE
     /\ peeked' = {}
     /\ LET told == IF outcome = "none" THEN {} ELSE peeked
-           \* code: confirmDelivered -> markDelivered marks those still waiting, only when "stored".
-           \* fix: a stored or partial reply marks every claimed notice; "none" releases them.
-           marked == IF ClaimOnPeek
-                       THEN IF outcome = "none" THEN {} ELSE peeked
-                       ELSE IF outcome = "stored" THEN {m \in peeked : IsWaiting(m)} ELSE {}
-           released == IF ClaimOnPeek /\ outcome = "none" THEN peeked ELSE {}
+           \* markDelivered(): ids that are claimed or waiting (and still in state.notices)
+           marked == {m \in told : kept[m] /\ (st[m] = "claimed" \/ st[m] \in Waiting)}
        IN /\ log' = log \cup {Delivery(m, "reply") : m \in told}
           /\ sends' = [m \in Notices |-> IF m \in told THEN Bump(sends[m]) ELSE sends[m]]
-          /\ st' = [m \in Notices |-> IF m \in marked THEN "digested"
-                                      ELSE IF m \in released THEN nt[m].prev
-                                      ELSE st[m]]
-    /\ UNCHANGED <<now, lastTickAt, pol, nt, kept, interrupts, criticals, mutes, penalties, ownerMute>>
+          /\ st' = IF outcome = "none"
+                     THEN StAfterRelease(peeked)
+                     ELSE [m \in Notices |-> IF m \in marked THEN "digested" ELSE st[m]]
+          /\ nt' = NtClear(IF outcome = "none" THEN Released(peeked) ELSE marked)
+    /\ UNCHANGED <<now, lastTickAt, pol, kept, interrupts, criticals, mutes, penalties, shown, ownerMute>>
 
-(* mute(): set the mute, drop waiting notices on the topic. *)
+(* The daemon restarts during a turn: the turn is gone, and the new Notifier's constructor runs
+   release(state) on the stored state, so every claimed notice waits again. *)
+Restart ==
+    /\ Concierge
+    /\ busy
+    /\ busy' = FALSE
+    /\ peeked' = {}
+    /\ st' = StAfterRelease(Notices)
+    /\ nt' = NtClear(Released(Notices))
+    /\ UNCHANGED <<now, lastTickAt, pol, kept, interrupts, criticals, mutes, penalties,
+                   log, sends, shown, ownerMute>>
+
+(* mute(): set the mute, drop waiting notices on the topic (a claimed notice is not waiting). *)
 Mute(tp, dur) ==
     /\ mutes' = [mutes EXCEPT ![tp] = Until(now + dur)]
     /\ st' = [m \in Notices |-> IF IsWaiting(m) /\ nt[m].topic = tp THEN "dropped" ELSE st[m]]
     /\ ownerMute' = [ownerMute EXCEPT ![tp] = Until(now + dur)]
-    /\ UNCHANGED <<now, lastTickAt, pol, nt, kept, interrupts, criticals, penalties, busy, peeked, log, sends>>
+    /\ UNCHANGED <<now, lastTickAt, pol, nt, kept, interrupts, criticals, penalties, busy, peeked, log, sends, shown>>
 
 (* unmute() *)
 Unmute(tp) ==
     /\ mutes[tp] # NONE \/ ownerMute[tp] # NONE
     /\ mutes' = [mutes EXCEPT ![tp] = NONE]
     /\ ownerMute' = [ownerMute EXCEPT ![tp] = NONE]
-    /\ UNCHANGED <<now, lastTickAt, pol, st, nt, kept, interrupts, criticals, penalties, busy, peeked, log, sends>>
+    /\ UNCHANGED <<now, lastTickAt, pol, st, nt, kept, interrupts, criticals, penalties, busy, peeked, log, sends, shown>>
 
 (* Notifier.dislike(noticeId): finds the notice in state.notices, then penalize(topic, now + 7d). *)
 Penalize(n) ==
     /\ kept[n]
     /\ penalties' = [penalties EXCEPT ![nt[n].topic] = Until(now + PenaltySlots)]
-    /\ UNCHANGED <<now, lastTickAt, pol, st, nt, kept, interrupts, criticals, mutes, busy, peeked, log, sends, ownerMute>>
+    /\ UNCHANGED <<now, lastTickAt, pol, st, nt, kept, interrupts, criticals, mutes, busy, peeked, log, sends, shown, ownerMute>>
 
 (* The wall clock moves on. Nothing in GovernorState changes until the next call. *)
 Advance ==
@@ -306,7 +338,7 @@ Advance ==
     /\ now' = now + 1
     \* ghost normalisation: a mute that has run out is the same as no mute
     /\ ownerMute' = [t \in Topics |-> IF ownerMute[t] > now + 1 THEN ownerMute[t] ELSE NONE]
-    /\ UNCHANGED <<lastTickAt, pol, st, nt, kept, interrupts, criticals, mutes, penalties, busy, peeked, log, sends>>
+    /\ UNCHANGED <<lastTickAt, pol, st, nt, kept, interrupts, criticals, mutes, penalties, busy, peeked, log, sends, shown>>
 
 ConciergeReplyAny == \E o \in ReplyOutcomes : ConciergeReply(o)
 MuteAny     == Feedback /\ \E tp \in Topics, dur \in MuteFor : Mute(tp, dur)
@@ -317,16 +349,16 @@ Next ==
     \/ OfferAny
     \/ Tick
     \/ DigestCommand
-    \/ ConciergePeek
+    \/ ConciergeClaim
     \/ ConciergeReplyAny
+    \/ Restart
     \/ MuteAny
     \/ UnmuteAny
     \/ PenalizeAny
     \/ Advance
 
-\* The daemon keeps ticking (every 30 s) and the clock keeps moving.
-\* With ClaimOnPeek, a claimed notice also needs the concierge's turn to end.
-Fairness == WF_vars(Tick) /\ WF_vars(Advance) /\ (ClaimOnPeek => WF_vars(ConciergeReplyAny))
+\* The daemon keeps ticking (every 30 s), the clock keeps moving, and a concierge turn ends.
+Fairness == WF_vars(Tick) /\ WF_vars(Advance) /\ WF_vars(ConciergeReplyAny)
 
 Spec == Init /\ [][Next]_vars /\ Fairness
 
@@ -343,7 +375,7 @@ Spec == Init /\ [][Next]_vars /\ Fairness
 Live(u) == IF u # NONE /\ u > now THEN u ELSE NONE
 View == <<now, Max2(lastTickAt, now - D - 1), pol, st, nt, kept, interrupts, criticals,
           [t \in Topics |-> Live(mutes[t])], [t \in Topics |-> Live(penalties[t])],
-          busy, peeked, log, sends, [t \in Topics |-> Live(ownerMute[t])]>>
+          busy, peeked, log, sends, shown, [t \in Topics |-> Live(ownerMute[t])]>>
 
 -----------------------------------------------------------------------------
 (* Properties. Each is the rule from docs/DESIGN.md, stated over what reached the owner. *)
@@ -356,6 +388,9 @@ TypeOK ==
 
 Alone == {e \in log : e.how = "alone" /\ nt[e.n].eff # "critical"}
 Crit  == {e \in log : e.how = "alone" /\ nt[e.n].eff = "critical"}
+\* Sends vigil starts on its own: "alone" and "digest". A concierge "reply" and the /digest
+\* "command" are solicited: the owner wrote first.
+Unsolicited == {e \in log : e.how \in {"alone", "digest"}}
 
 \* Budget: in every rolling day, high/normal interrupts <= maxInterruptsPerDay, and two of them
 \* are at least minGapMinutes apart.
@@ -368,12 +403,12 @@ CriticalCap ==
     \A e \in Crit : Cardinality({f \in Crit : f.at > e.at - D /\ f.at <= e.at}) <= pol.critCap
 
 \* Quiet: nothing but critical reaches the owner unasked during quiet hours, digests included.
-\* A reply (the concierge's, or /digest) is solicited: the owner wrote first.
 Quiet ==
-    \A e \in log : (e.how = "digest" \/ e \in Alone) => ~IsQuiet(e.at)
+    \A e \in Unsolicited : (e.how = "digest" \/ e \in Alone) => ~IsQuiet(e.at)
 
-\* NoMuted: nothing reaches the owner on a topic while the owner has it muted.
-NoMuted == \A e \in log : ~e.muted
+\* NoMuted: nothing vigil sends unasked (alone or in a digest) is on a topic the owner has muted.
+\* A reply the owner asked for is solicited and exempt, like Quiet (owner decision, 2026-11-04).
+NoMuted == \A e \in Unsolicited : ~e.muted
 
 \* NoDuplicate: two notices that reached the owner never share a dedup key within the dedup window.
 NoDuplicate ==
@@ -381,21 +416,26 @@ NoDuplicate ==
         (e.n # f.n /\ nt[e.n].key = nt[f.n].key) =>
             (nt[e.n].createdAt - nt[f.n].createdAt >= pol.dedup \/ nt[f.n].createdAt - nt[e.n].createdAt >= pol.dedup)
 
-\* Conservation: every offered notice has exactly one status, a waiting notice is never forgotten,
-\* a notice reaches the owner at most once, and it reached the owner iff its status says so.
+\* Conservation: every offered notice has exactly one status, a waiting or claimed notice is never
+\* forgotten, a notice reaches the owner at most once, and it reached the owner iff its status says so.
 Conservation ==
     \A n \in Notices :
-        /\ st[n] # "none" => st[n] \in Waiting \cup Final \cup {"telling"}
-        /\ st[n] \in Waiting \cup {"telling"} => kept[n]
+        /\ st[n] # "none" => st[n] \in Waiting \cup Final \cup {"claimed"}
+        /\ st[n] \in Waiting \cup {"claimed"} => kept[n]
         /\ sends[n] <= 1
         /\ (sends[n] = 1) <=> (st[n] \in {"delivered", "digested"})
 
 \* A final status never changes again.
 FinalStable == [][\A n \in Notices : st[n] \in Final => st'[n] = st[n]]_vars
 
-\* EventuallyResolved: every waiting notice is eventually delivered, digested, dropped or expired.
-EventuallyResolved == \A n \in Notices : (st[n] \in Waiting \cup {"telling"}) ~> (st[n] \in Final)
+\* EventuallyResolved: every waiting or claimed notice is eventually delivered, digested, dropped
+\* or expired.
+EventuallyResolved == \A n \in Notices : (st[n] \in Waiting \cup {"claimed"}) ~> (st[n] \in Final)
 
-\* Extra (finding check, not a DESIGN.md rule): nothing reaches the owner at or after its expiresAt.
-NoStaleDelivery == \A e \in log : e.at < nt[e.n].expiresAt
+\* NoStaleDelivery (not a DESIGN.md rule): nothing reaches the owner at or after its expiresAt.
+\* For a concierge "reply" the time that counts is when the turn claimed the notice for its prompt:
+\* claim() takes only unexpired notices, but one can expire while the model writes, and the reply
+\* still tells it (characterized in README.md, not a finding).
+NoStaleDelivery ==
+    \A e \in log : IF e.how = "reply" THEN shown[e.n] < nt[e.n].expiresAt ELSE e.at < nt[e.n].expiresAt
 =============================================================================

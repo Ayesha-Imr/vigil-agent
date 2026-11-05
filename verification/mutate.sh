@@ -18,7 +18,7 @@ for m in "$VERIFY_DIR"/mutants/*.mutant; do
 	field() { sed -n "s/^$1: //p" "$m" | head -1; }
 	spec=$(field spec); run=$(field run); cfg=$(field config); prop=$(field check); kind=$(field kind)
 	work=$(mktemp -d "${TMPDIR:-/tmp}/vigil-mutant.XXXXXX")
-	cp "$VERIFY_DIR/$spec"/*.tla "$VERIFY_DIR/$spec"/*.cfg "$work/"
+	cp -R "$VERIFY_DIR/$spec"/. "$work/"
 	# Apply every old -> new block; each old text must occur exactly once in the spec's base module.
 	if ! python3 -I - "$m" "$work" "$cfg" "$prop" "$kind" <<'PY'
 import sys, pathlib, re

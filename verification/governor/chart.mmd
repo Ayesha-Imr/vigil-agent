@@ -15,11 +15,11 @@ stateDiagram-v2
       s0 --> s1: a notice comes in [unless Evening]
       s0 --> s2: a notice comes in [when Night (quiet hours)]
       s0 --> s3: a notice comes in [unless Evening]
-      s2 --> s4: you send /digest
+      s2 --> s4: you send /digest [unless Evening]
       s3 --> s4: you send /digest
       s2 --> s4: the 30-second tick runs [when Day]
-      s2 --> s5: the 30-second tick runs [unless Day]
-      s3 --> s5: the 30-second tick runs [unless Day]
+      s2 --> s5: you send /digest or the 30-second tick runs [unless Day]
+      s3 --> s5: you send /digest or the 30-second tick runs [unless Day]
       s3 --> s4: the 30-second tick runs [when Evening]
     }
     --

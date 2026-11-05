@@ -1,0 +1,11 @@
+spec: governor
+run: MCGovernor.tla
+config: Governor_concierge.cfg
+check: Conservation
+kind: invariant
+code: src/agent/concierge.ts goes back to notifier.waiting() (claim() changes nothing), so a digest during the turn and the reply both tell the notice
+@@@ old
+          /\ st' = [m \in Notices |-> IF m \in c THEN "claimed" ELSE st[m]]
+@@@ new
+          /\ st' = st
+@@@ end

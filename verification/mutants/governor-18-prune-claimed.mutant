@@ -1,0 +1,11 @@
+spec: governor
+run: MCGovernor.tla
+config: Governor_long_expiry.cfg
+check: Conservation
+kind: invariant
+code: src/core/governor.ts tick(): the prune loses `|| n.status === "claimed"` (4d5f2c7 reverted), so a claimed notice older than HISTORY_MS leaves state.notices mid-turn (finding ClaimPruned comes back)
+@@@ old
+        /\ kept' = [m \in Notices |-> kept[m] /\ (st2[m] \in Waiting \cup {"claimed"} \/ nt[m].createdAt > now - HistorySlots)]
+@@@ new
+        /\ kept' = [m \in Notices |-> kept[m] /\ (st2[m] \in Waiting \/ nt[m].createdAt > now - HistorySlots)]
+@@@ end

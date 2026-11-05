@@ -1,0 +1,11 @@
+spec: governor
+run: MCGovernor.tla
+config: Governor_concierge.cfg
+check: Conservation
+kind: invariant
+code: src/agent/concierge.ts: a reply stored with r.error and model text calls releaseClaim() instead of confirmDelivered() (finding ConciergePartialReply comes back)
+@@@ old
+          /\ st' = IF outcome = "none"
+@@@ new
+          /\ st' = IF outcome \in {"none", "partial"}
+@@@ end
