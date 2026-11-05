@@ -10,9 +10,10 @@ a.m., the same news twice, a flood of low-value updates. We describe vigil, an o
 always-on agent built on the pi agent harness. It treats the owner's attention as a resource with
 a hard budget, enforced by a small pure state machine (the *attention governor*) between the
 agent and the phone. We verify the governor's promises (a daily interrupt budget, quiet hours,
-mutes, deduplication, no lost notices) in three independent layers: TLA+ model checking of the
-design, property-based tests of the TypeScript implementation, and runtime re-checks against the
-recorded delivery history before every send. We apply the same method to the other places where
+mutes, deduplication, no lost notices) in four layers: TLA+ model checking of the design,
+property-based tests of the TypeScript implementation, trace validation showing that recorded runs
+of the implementation are behaviours of the model, and runtime re-checks against the recorded
+delivery history before every send. We apply the same method to the other places where
 an always-on agent can do lasting harm: approvals for risky tool calls, the durable outbox, the
 scheduler and the worker pool. The model checker and the tests found real defects, including
 approval and sandbox bypasses, a scheduler slot that could hold its job for six hours, and
@@ -90,7 +91,7 @@ atomic step in code is one step in the model); show every property failing on a 
 before trusting a pass; report findings as findings; and leave a project-local skill so the next
 agent can rerun and maintain the check.
 
-**Three layers for the governor.** A defect has to get past all three to reach the phone.
+**Four layers for the governor.** A defect has to get past all of them to reach the phone.
 
 1. *Model checking* (TLA+/TLC): every interleaving of offers, ticks, replies and mutes, with
    discrete time and small bounds.
@@ -99,6 +100,10 @@ agent can rerun and maintain the check.
 3. *Runtime guard*: before each send, the rules are checked again against the delivery history in
    the database. That history is independent of the governor's own state. A violation refuses the
    send.
+4. *Trace validation*: runs of the real TypeScript governor, driven in the model's time steps, are
+   recorded and checked by TLC to be behaviours of the TLA+ model, step by step, with the same
+   resulting state and the same notices sent. This ties layers 1 and 2 together: the code is shown
+   to refine the model on the recorded runs, not just to satisfy the same rules separately.
 
 **Other targets.** Approvals (no unapproved execution, single use, denied/expired never run),
 the outbox (order per conversation, no loss, duplicates only through a crash window), the
@@ -125,6 +130,11 @@ configurations, in distinct states:
 | Outbox | OrderPreserved, SplitPartsInOrder, TicketMessagesInOrder, AtMostOnceWithoutCrashOrTimeout, RefRecorded, NoLoss | 671,632 | 10 / 10 |
 | Scheduler | OneTriggerPerSlot, NoOverlap, NoLostSlot, AtJobRuns, claimed runs complete across a crash | 250,737 (runs outliving the lease) | 9 / 9, plus 2 guard demos |
 | Workers | NoDoubleRun, slot limits, ReservedSlotWorks, OwnerNeverStarved, InputNeverLostSilently, StopSticks, RetriesBounded, EventLoopProgress | 432,443 | 12 / 12, plus 1 guard demo |
+
+Trace validation accepted 2,000 recorded runs of the real governor (232,390 steps, at larger
+bounds than the model check: up to 50 notices over 10 days) and rejected all six deliberate
+divergences, including reverts of two fixes above. The default check (100 traces plus the mutants)
+runs in about a minute.
 
 Every defect found by model checking was replayed on the TypeScript before it was fixed, and stays
 in the suite as a passing regression check next to a mutant that undoes the fix. What remains
@@ -217,5 +227,5 @@ batching (Fitz et al. 2019) for digests over immediate delivery.
   constraints on top of the learned policy (safe exploration for notification timing).
 - An offline benchmark of notification streams with owner judgements, to compare policies
   (`vigil simulate` is the harness for it).
-- Refinement checking of the TypeScript against the TLA+ model via trace validation, rather than
-  two separate checks of the same rules.
+- Trace validation for the outbox, scheduler and workers, which involve awaits and a database and
+  need recording inside the daemon rather than around pure functions.

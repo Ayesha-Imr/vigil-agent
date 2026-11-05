@@ -311,7 +311,9 @@ vigil verify        # or: bash verification/run.sh   (needs Java)
 Every property has been shown to fail on a broken variant of the model (`verification/mutate.sh`
 and each spec's `mutants/`). The model checks found 19 real defects in the code, each replayed on the
 TypeScript and fixed; [docs/REPORT.md](docs/REPORT.md) lists them.
-The property tests in `test/` check the TypeScript against the same rules. See
+The property tests in `test/` check the TypeScript against the same rules, and
+`verification/run.sh --trace` checks that recorded runs of the real governor are behaviours of its
+model (trace validation). See
 [verification/README.md](verification/README.md) for bounds and what is not covered. The
 project-local skills in `.claude/skills/` and `.pi/skills/` tell a coding agent how to rerun and
 maintain each check when the code changes. vigil's own workers ship with pstack's formal
