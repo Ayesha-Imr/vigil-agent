@@ -1,7 +1,7 @@
 // The daemon: builds the services, starts the channels, routes every inbound message through the
 // gate, and runs the loops (outbox, governor, scheduler, watchers, workers).
 
-import { execFile, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { randomInt } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -10,9 +10,8 @@ import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { Concierge } from "./agent/concierge.ts";
 import { loadGatePolicy } from "./agent/gate.ts";
 import { ModelRouter } from "./agent/models.ts";
-import { DREAM_PROMPT, fill, HEARTBEAT_PROMPT } from "./agent/prompts.ts";
+import { fill, HEARTBEAT_PROMPT } from "./agent/prompts.ts";
 import type { Services } from "./agent/services.ts";
-import { buildSession, promptWithFallback } from "./agent/sessions.ts";
 import { triage } from "./agent/triage.ts";
 import { WorkerPool } from "./agent/workers.ts";
 import type { Channel, InboundMessage } from "./channels/types.ts";
@@ -24,7 +23,9 @@ import { type JobRun, Scheduler } from "./core/scheduler.ts";
 import { Tickets } from "./core/tickets.ts";
 import { type Clock, DAY, HOUR, localDate, systemClock } from "./core/time.ts";
 import { type Fetcher, Watchers } from "./core/watchers.ts";
+import { dreamStatus, runDream, undoDream } from "./memory/dream.ts";
 import { Memory } from "./memory/memory.ts";
+import { parseDreamSchedule } from "./memory/schedule.ts";
 import { Db } from "./store/db.ts";
 
 export interface DaemonOptions {
@@ -102,6 +103,15 @@ export class Daemon {
 
 	private constructor(s: Services, channels: Map<ChannelId, Channel>, useTimers: boolean, log: (line: string) => void) {
 		this.s = s;
+		s.dream = {
+			status: () => this.dreamStatusText(),
+			setSchedule: (text) => this.setDreamSchedule(text),
+			now: async () => {
+				const r = await runDream(s);
+				return `Memory consolidation ${r.status}: ${r.summary}`;
+			},
+			undo: () => undoDream(s),
+		};
 		this.channels = channels;
 		this.useTimers = useTimers;
 		this.log = log;
@@ -317,10 +327,9 @@ export class Daemon {
 		if (p.heartbeatMinutes > 0) {
 			this.s.scheduler.ensure({ name: HEARTBEAT_JOB, kind: "every", spec: String(p.heartbeatMinutes), prompt: "built in", action: "agent" });
 		} else off(HEARTBEAT_JOB);
-		if (p.dreamAt) {
-			const [h, m] = p.dreamAt.split(":").map(Number);
-			this.s.scheduler.ensure({ name: DREAM_JOB, kind: "cron", spec: `${m} ${h} * * *`, prompt: "built in", action: "agent" });
-		} else off(DREAM_JOB);
+		const dream = parseDreamSchedule(p.dreamAt);
+		if (dream) this.s.scheduler.ensure({ name: DREAM_JOB, kind: dream.kind, spec: dream.spec, prompt: "built in", action: "agent" });
+		else off(DREAM_JOB);
 	}
 
 	async runJob(run: JobRun): Promise<void> {
@@ -435,30 +444,24 @@ export class Daemon {
 
 	/** Nightly memory consolidation in a throwaway session, then a git commit of the memory dir. */
 	private async dream(): Promise<string> {
-		const s = this.s;
-		const tz = s.cfg.owner.timezone;
-		const today = localDate(s.clock.now(), tz);
-		const yesterday = localDate(s.clock.now() - DAY, tz);
-		const journals = `${s.memory.journalFor(yesterday)}\n${s.memory.journalFor(today)}`.trim();
-		if (!journals) return "skipped: empty journal";
-		const before = readFileSync(s.memory.memoryPath, "utf8");
-		const { session } = await buildSession(s, {
-			role: "dream",
-			cwd: s.paths.memory,
-			persistence: { kind: "memory" },
-			prompt: fill(DREAM_PROMPT, { owner: s.cfg.owner.name, path: s.memory.memoryPath, memory: before, journals: journals.slice(-30_000) }),
-			builtinTools: ["read", "write"],
-			customTools: [],
-			requester: "dream",
-			skills: false,
-		});
-		const r = await promptWithFallback(s, session, "dream", "Consolidate now.");
-		session.dispose();
-		await gitCommit(s.paths.memory, `dream ${today}`);
-		// A repeated request becomes one low-urgency offer to automate it, waiting for the digest.
-		const suggestion = /^SUGGEST:\s*(.+)$/m.exec(r.text)?.[1]?.trim();
-		if (suggestion) s.notifier.notify({ urgency: "low", topic: "vigil:suggestion", text: `💡 ${suggestion}`, dedupKey: `suggest:${today}` });
-		return r.error ? `error: ${r.error}` : r.text.slice(0, 200);
+		const r = await runDream(this.s);
+		return `${r.status}: ${r.summary}`;
+	}
+
+	/** Change when memory is consolidated, and save it. Throws with a readable message on bad input. */
+	setDreamSchedule(text: string): string {
+		const parsed = parseDreamSchedule(text);
+		this.s.cfg.proactive.dreamAt = parsed ? text.trim() : null;
+		saveConfig(this.s.cfg, this.s.paths);
+		this.ensureSystemJobs();
+		this.s.db.event("dream", `schedule set to ${parsed?.label ?? "off"}`);
+		return parsed ? `Memory consolidation now runs ${parsed.label}.` : "Memory consolidation is off. /dream now still runs it once.";
+	}
+
+	dreamStatusText(): string {
+		const parsed = parseDreamSchedule(this.s.cfg.proactive.dreamAt);
+		const job = this.s.scheduler.list().find((j) => j.created_by === "system" && j.name === DREAM_JOB);
+		return dreamStatus(this.s, parsed?.label, job?.enabled ? job.next_run_at : null);
 	}
 
 	/** Every inbound message: store, gate, route. */
@@ -806,8 +809,30 @@ export class Daemon {
 				return true;
 			}
 			case "/memory": {
+				if (args[0] === "undo") {
+					void undoDream(s).then(say);
+					return true;
+				}
 				const text = s.memory.core().replace(/^# Memory[\s\S]*?(?=## )/, "").trim();
 				say(text.length > 3500 ? `${text.slice(0, 3500)}\n…` : text || "Nothing remembered yet.");
+				return true;
+			}
+			case "/dream": {
+				const rest = args.join(" ").trim();
+				if (!rest) {
+					say(this.dreamStatusText());
+					return true;
+				}
+				if (rest === "now") {
+					say("Consolidating memory now…");
+					void runDream(s).then((r) => say(`Memory consolidation ${r.status}: ${r.summary}`));
+					return true;
+				}
+				try {
+					say(this.setDreamSchedule(rest));
+				} catch (err) {
+					say((err as Error).message);
+				}
 				return true;
 			}
 			case "/jobs": {
@@ -937,7 +962,8 @@ export class Daemon {
 const HELP = `vigil commands
 /status — what is going on
 /tickets — open background work · /stop <id>
-/jobs — what is scheduled · /memory — what vigil remembers
+/jobs — what is scheduled · /memory — what vigil remembers · /memory undo
+/dream — memory consolidation: /dream now · /dream 03:00 · /dream every 12h · /dream off
 /why — why recent things were or weren't sent
 /digest — what is waiting for the digest
 /mute <topic> [hours] · /unmute <topic>
@@ -947,17 +973,6 @@ const HELP = `vigil commands
 /login codex · /login opencode <key>
 Anything else is a message to vigil. Reply to one of its messages to talk about that thing. React 👎 to a notice to hear less of that topic, 😴 to mute it for a day.`;
 
-function gitCommit(dir: string, message: string): Promise<void> {
-	const git = (args: string[]) =>
-		new Promise<void>((resolve) => {
-			execFile("git", ["-C", dir, ...args], { timeout: 30_000 }, () => resolve());
-		});
-	return (async () => {
-		if (!existsSync(join(dir, ".git"))) await git(["init", "-q"]);
-		await git(["add", "-A"]);
-		await git(["-c", "user.name=vigil", "-c", "user.email=vigil@localhost", "commit", "-qm", message]);
-	})();
-}
 
 
 /** Text from outside (display names, ids) made safe to log and print: no control characters. */

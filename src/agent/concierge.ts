@@ -189,6 +189,8 @@ export class Concierge {
 				// A stored reply counts as told, error or not (finding ConciergePartialReply).
 				this.reply(input, out);
 				this.s.notifier.confirmDelivered(ids);
+				// Both sides of the conversation go in the journal: consolidation checks memory against it.
+				this.s.memory.journal("vigil", out.slice(0, 400));
 			} else {
 				if (out && !SILENT.test(out)) this.reply(input, out);
 				this.s.notifier.releaseClaim(ids);

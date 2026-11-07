@@ -49,7 +49,7 @@ That rule is enforced in code, not only in prompts:
 | **Schedules** | "Remind me at 5", "every weekday at 8:30 brief me", "every Sunday clean up my downloads". Cron with your time zone; missed runs during downtime fold into one |
 | **Watchers** | Web pages, RSS/Atom feeds, command output. Checked without a model; only a real change wakes triage on a cheap model |
 | **Heartbeat** | Hourly look around `HEARTBEAT.md` and stuck work. It usually decides to say nothing, and it skips the model call when there's nothing to look at |
-| **Memory** | Plain files: `MEMORY.md` (in every prompt, capped), daily journals, notes. Consolidated nightly by a "dream" job and versioned with git |
+| **Memory** | Plain files: a short `MEMORY.md` index in every prompt, linked detail notes, and a journal of both sides of each conversation. A "dream" re-checks and tidies them on a schedule you set, with every run versioned in git and undoable |
 | **Two subscriptions** | ChatGPT (Codex) via device-code login, works on a headless server, even from your phone with `/login codex`. OpenCode Go via API key. Roles fall back across providers on rate limits and outages |
 | **Skills and MCP** | Workers load vigil's shipped skills (including formal verification) and any MCP servers in `mcp.json` |
 | **Panel** | A small web page: what needs you first, then work in progress, the digest queue, the attention budget, schedule and activity |
@@ -219,6 +219,9 @@ useful phrasings:
 | `/tickets`, `/stop <id>` | background work |
 | `/digest` | what's waiting for the digest, now |
 | `/jobs`, `/memory` | what's scheduled; what vigil remembers about you |
+| `/dream`, `/dream now` | when memory is consolidated and what the last run did; run it once now |
+| `/dream 03:00` · `/dream every 12h` · `/dream weekly sun 03:00` · `/dream off` | change when it runs (or just ask: "consolidate my memory twice a day") |
+| `/memory undo` | put memory back as it was before the last consolidation |
 | `/why` | the attention governor's recent decisions, and why |
 | `/mute <topic> [hours]`, `/unmute <topic>` | silence a topic |
 | `/mode off\|observe\|auto` | proactive work from watchers |
@@ -275,6 +278,35 @@ vigil simulate --max 2 --gap 90 --quiet 23:00-07:30
 This replays your last week of notices (or a synthetic noisy week) through the governor under a
 policy you're considering, and shows day by day how many times your phone would have buzzed, how
 many digests you'd have got, and what was dropped as a repeat. Nothing is sent.
+
+### Memory and dreaming
+
+vigil's memory is plain files in `~/.vigil/memory`, in their own local git repository (never
+pushed anywhere):
+
+- `MEMORY.md` is a short index loaded into every conversation: one fact per line, or a pointer
+  `[[slug]] — what it covers` to a note. It is capped, because every line costs tokens in every
+  turn and a wrong line is repeated in every session.
+- `notes/<slug>.md` hold the detail, with a one-sentence description at the top.
+- `journal/` records both sides of each conversation and vigil's own background work. It is the
+  record that memory is checked against.
+
+A consolidation ("dream") runs on your schedule (daily at 04:00 by default). It reads only the
+journal since the last run, and skips the model call when nothing is new. Then it:
+
+1. **verifies** what memory claims against the journal, and fixes what the record contradicts;
+2. **adds** durable facts you stated, each with the date it was said, marking inferences as such;
+3. **resolves** changes: a later explicit correction wins and the old value is noted, anything
+   unclear is kept as a `CONFLICT:` line, and a passing remark never overrides a stated preference;
+4. **organizes**: merges duplicates, moves detail into notes behind a pointer, fixes links.
+
+Text from web pages, emails, forwards and watchers is never recorded as a fact about you. Every run
+is then checked in code: secrets are redacted, a run that would remove more than 40% of memory is
+undone (you get a quiet notice), and the result is committed to git so `/memory undo` can roll it
+back. `/dream` shows what the last run added, merged and changed.
+
+The design follows Anthropic's notes on agent memory: transcripts are the ground truth, a small
+injected index sits over linked notes, and consolidation tests notes against what actually happened.
 
 ### Checking a model before you rely on it
 
@@ -350,7 +382,8 @@ verification skills, so they can do the same for your code.
     "dedupWindowMinutes": 720, "defaultExpiryHours": 36,
     "silentDigests": true                             // digests arrive without a buzz
   },
-  "proactive": { "mode": "observe", "heartbeatMinutes": 60, "dreamAt": "04:00" },
+  "proactive": { "mode": "observe", "heartbeatMinutes": 60,
+                 "dreamAt": "04:00" },                // or "every 12h", "weekly sun 03:00", cron, null
   "workers": { "max": 2 },
   "approvals": { "ttlMinutes": 30 }
 }

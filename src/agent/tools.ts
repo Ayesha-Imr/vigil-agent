@@ -268,6 +268,29 @@ export function conciergeTools(s: Services, hooks: ConciergeToolHooks): ToolDefi
 			},
 		}),
 		defineTool({
+			name: "memory_consolidation",
+			label: "Memory consolidation",
+			description:
+				'Memory consolidation ("dreaming"): vigil re-checks and tidies MEMORY.md and its notes against the journal. action: status (when it runs, what the last run did), set (change when it runs; schedule is one of "04:00" for daily, "every 12h", "weekly sun 03:00", a 5-field cron expression, or "off"), now (run it once now), undo (put back the memory from before the last run). Use set, now and undo only when the owner asks; translate their words into one of the schedule forms (e.g. "twice a day" → "every 12h", "weeknights at 2" → "0 2 * * 1-5").',
+			parameters: Type.Object({
+				action: strEnum(["status", "set", "now", "undo"], "What to do"),
+				schedule: Type.Optional(Type.String({ description: "For set: the new schedule." })),
+			}),
+			async execute(_id, p) {
+				const d = s.dream;
+				if (!d) return text("Memory consolidation is not available here.");
+				if (p.action !== "status" && hooks.currentOrigin().channel === "system") return text("Only the owner can change memory consolidation.");
+				try {
+					if (p.action === "set") return text(d.setSchedule(p.schedule ?? ""));
+					if (p.action === "now") return text(await d.now());
+					if (p.action === "undo") return text(await d.undo());
+					return text(d.status());
+				} catch (err) {
+					return text((err as Error).message);
+				}
+			},
+		}),
+		defineTool({
 			name: "unmute_topic",
 			label: "Unmute topic",
 			description: "Undo a mute.",

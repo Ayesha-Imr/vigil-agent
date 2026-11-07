@@ -4,7 +4,7 @@
 
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
-import { localDate, localMinuteOfDay } from "../core/time.ts";
+import { localDate } from "../core/time.ts";
 
 export const MEMORY_CAP_CHARS = 8000;
 
@@ -99,11 +99,57 @@ export class Memory {
 	/** Append one entry to today's journal. */
 	journal(kind: string, text: string, now = this.now()): void {
 		const day = localDate(now, this.tz());
-		const m = localMinuteOfDay(now, this.tz());
-		const hhmm = `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+		const hhmm = clockTime(now, this.tz());
 		const file = join(this.dir, "journal", `${day}.md`);
 		if (!existsSync(file)) writeFileSync(file, `# ${day}\n\n`);
 		appendFileSync(file, `- ${hhmm} [${kind}] ${text.replace(/\s+/g, " ").trim().slice(0, 1000)}\n`);
+	}
+
+	/**
+	 * Journal entries written after `since`, oldest first, across at most `maxDays` days.
+	 */
+	journalSince(since: number, now = this.now(), maxDays = 14): string[] {
+		const tz = this.tz();
+		const out: string[] = [];
+		const startDay = localDate(Math.max(since, now - maxDays * 86_400_000), tz);
+		const sinceDay = localDate(since, tz);
+		const sinceTime = clockTime(since, tz);
+		const days = existsSync(join(this.dir, "journal"))
+			? readdirSync(join(this.dir, "journal")).filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f)).map((f) => f.slice(0, 10)).filter((d) => d >= startDay).sort()
+			: [];
+		for (const day of days) {
+			for (const line of this.journalFor(day).split("\n")) {
+				// Entries carry HH:MM:SS (older ones HH:MM); only those strictly after `since` count.
+				const m = /^- (\d{2}:\d{2}(?::\d{2})?) /.exec(line);
+				if (!m) continue;
+				if (day < sinceDay || (day === sinceDay && m[1] <= sinceTime)) continue;
+				out.push(`${day} ${line.slice(2)}`);
+			}
+		}
+		return out;
+	}
+
+	/** Characters in MEMORY.md and the notes: what a consolidation may reorganize, but should not lose. */
+	size(): number {
+		let n = readFileSync(this.memoryPath, "utf8").length;
+		for (const f of this.noteFiles()) n += readFileSync(join(this.dir, "notes", f), "utf8").length;
+		return n;
+	}
+
+	noteFiles(): string[] {
+		const dir = join(this.dir, "notes");
+		return existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".md")).sort() : [];
+	}
+
+	/** One line per note: its [[slug]] and the description from its frontmatter. */
+	notesIndex(): string {
+		return this.noteFiles()
+			.map((f) => {
+				const text = readFileSync(join(this.dir, "notes", f), "utf8");
+				const desc = /^description:\s*(.+)$/m.exec(text)?.[1]?.trim() ?? text.split("\n").find((l) => l.trim() && !l.startsWith("---") && !l.startsWith("#"))?.slice(0, 120) ?? "";
+				return `[[${f.slice(0, -3)}]] — ${desc}`;
+			})
+			.join("\n");
 	}
 
 	journalFor(day: string): string {
@@ -151,4 +197,9 @@ function walk(dir: string): string[] {
 		else if (name.endsWith(".md")) out.push(p);
 	}
 	return out;
+}
+
+/** Local wall-clock time with seconds, for journal entries. */
+function clockTime(t: number, tz: string): string {
+	return new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }).format(t);
 }

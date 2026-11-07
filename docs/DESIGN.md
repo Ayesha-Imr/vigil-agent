@@ -69,7 +69,7 @@ flowchart LR
 | Outbox | Every outbound message, stored before it is sent | Retried with backoff; messages of one ticket to one conversation keep their order |
 | Job | A schedule the owner created (`cron`, `every`, `at`) with a prompt | One run per slot; missed slots during downtime coalesce into one run; a job never overlaps itself |
 | Heartbeat | A built-in job that wakes the concierge to look around | Reads `HEARTBEAT.md`, open tickets and the digest; usually decides to say nothing |
-| Memory | Plain files the agent reads and edits | `MEMORY.md` (curated, in every prompt), `journal/YYYY-MM-DD.md` (append-only), `notes/` (free form). A nightly "dream" job consolidates the journal into `MEMORY.md` |
+| Memory | Plain files the agent reads and edits | `MEMORY.md` (a capped index, in every prompt), `notes/<slug>.md` (detail, linked as `[[slug]]`), `journal/YYYY-MM-DD.md` (append-only record of both sides of each conversation and vigil's background work). A "dream" on the owner's schedule checks memory against the journal since its last run, then code redacts secrets, refuses a run that loses >40%, and commits to git (`/memory undo`) |
 
 ### Accept modes for proactive work
 

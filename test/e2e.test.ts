@@ -397,9 +397,9 @@ describe("vigil end to end", () => {
 
 	it("consolidates memory at night, commits it, and turns a pattern into one quiet suggestion", async () => {
 		h = await harness((ctx) => {
-			if (ctx.system.includes("nightly memory consolidation") || ctx.lastUser.includes("Consolidate now")) {
-				if (ctx.lastToolResult) return say("Merged two facts.\nSUGGEST: You checked Lisbon fares three mornings running; want a daily 8:30 check?");
-				const path = /at (\S+MEMORY\.md)/.exec(ctx.lastUser + ctx.system)?.[1] ?? "";
+			if (ctx.system.includes("[memory consolidation]") || ctx.lastUser.includes("Consolidate now")) {
+				if (ctx.lastToolResult) return say('SUMMARY: Merged two facts.\nREPORT: {"added": 1, "merged": 1}\nSUGGEST: You checked Lisbon fares three mornings running; want a daily 8:30 check?');
+				const path = h.daemon.s.memory.memoryPath;
 				return call("write", { path, content: "# Memory\n\n## About the owner\n\n## Preferences\n- Prefers aisle seats\n\n## Ongoing\n\n## Facts\n" });
 			}
 			return say("?");

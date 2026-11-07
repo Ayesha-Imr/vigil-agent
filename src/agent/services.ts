@@ -45,6 +45,14 @@ export interface Services {
 	fetchAttachments: (channel: ChannelId, attachments: Attachment[], acceptsImages: boolean) => Promise<{ images: ImageContent[]; notes: string[] }>;
 	/** Show a typing indicator in a chat, where the channel supports it. Never throws. */
 	typing: (channel: ChannelId, conversation: string) => Promise<void>;
+	/** Memory consolidation ("dreaming") controls; the daemon fills them in. */
+	dream?: {
+		status: () => string;
+		/** Throws with a readable message when the schedule cannot be read. */
+		setSchedule: (text: string) => string;
+		now: () => Promise<string>;
+		undo: () => Promise<string>;
+	};
 }
 
 /**

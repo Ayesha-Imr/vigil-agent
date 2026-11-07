@@ -25,6 +25,12 @@ describe("config", () => {
 		expect(c.proactive.dreamAt).toBeNull();
 		expect(c.attention.digestTimes).toEqual(["09:00", "18:00"]);
 	});
+	it("reads any dream schedule /dream accepts, and rejects the rest", () => {
+		expect(load({ owner: { timezone: "UTC" }, proactive: { dreamAt: "every 12h" } }).proactive.dreamAt).toBe("every 12h");
+		expect(load({ owner: { timezone: "UTC" }, proactive: { dreamAt: "weekly sun 03:00" } }).proactive.dreamAt).toBe("weekly sun 03:00");
+		expect(() => load({ owner: { timezone: "UTC" }, proactive: { dreamAt: "sometimes" } })).toThrow(/proactive.dreamAt/);
+	});
+
 	it("rejects a bad time zone with a clear message", () => {
 		expect(() => load({ owner: { timezone: "Mars/Olympus" } })).toThrow(/IANA/);
 	});

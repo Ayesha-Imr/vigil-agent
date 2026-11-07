@@ -51,5 +51,14 @@ The first version.
 - About 580 unit, property and end-to-end tests that run the real daemon against pi's faux provider.
 - `vigil demo` (a scripted day, no accounts) and `vigil eval` (behavioural scenarios on your models).
 
+**Memory**
+- Two layers: a capped `MEMORY.md` index in every prompt over linked `notes/<slug>.md`, and a
+  journal that records both sides of each conversation.
+- Consolidation ("dreaming") checks memory against the journal since the last run (skipped when
+  nothing is new), dates facts, keeps conflicts visible, and moves detail into notes. Afterwards,
+  code redacts secrets, undoes a run that would remove more than 40% of memory, and commits to git.
+- Its schedule is configurable: `dreamAt` takes "04:00", "every 12h", "weekly sun 03:00", a cron
+  expression or null; `/dream`, `/dream now`, `/dream <schedule>`, `/memory undo`, or ask in words.
+
 **Also**
 - A web panel, a pi package for laptop pi sessions, Docker and systemd deployment, CI.

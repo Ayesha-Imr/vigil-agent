@@ -129,11 +129,11 @@ describe("forget", () => {
 });
 
 describe("journal", () => {
-	it("appends to today's file with a header and HH:MM [kind] lines", () => {
+	it("appends to today's file with a header and HH:MM:SS [kind] lines", () => {
 		const t = Date.UTC(2026, 0, 5, 9, 7);
 		mem.journal("note", "first   entry\nwith newline", t);
 		mem.journal("job", "second", t + 61 * 60_000);
-		expect(mem.journalFor("2026-01-05")).toBe("# 2026-01-05\n\n- 09:07 [note] first entry with newline\n- 10:08 [job] second\n");
+		expect(mem.journalFor("2026-01-05")).toBe("# 2026-01-05\n\n- 09:07:00 [note] first entry with newline\n- 10:08:00 [job] second\n");
 		expect(readFileSync(join(dir, "journal", "2026-01-05.md"), "utf8")).toBe(mem.journalFor("2026-01-05"));
 	});
 
@@ -142,13 +142,13 @@ describe("journal", () => {
 		// 21:30 UTC on 5 Jan is 02:30 on 6 Jan in Karachi (UTC+5).
 		mem.journal("note", "late", Date.UTC(2026, 0, 5, 21, 30));
 		expect(mem.journalFor("2026-01-05")).toBe("");
-		expect(mem.journalFor("2026-01-06")).toBe("# 2026-01-06\n\n- 02:30 [note] late\n");
+		expect(mem.journalFor("2026-01-06")).toBe("# 2026-01-06\n\n- 02:30:00 [note] late\n");
 	});
 
 	it("cuts very long entries", () => {
 		mem.journal("note", "x".repeat(5000), Date.UTC(2026, 0, 5, 0, 0));
 		const line = mem.journalFor("2026-01-05").split("\n")[2];
-		expect(line).toBe(`- 00:00 [note] ${"x".repeat(1000)}`);
+		expect(line).toBe(`- 00:00:00 [note] ${"x".repeat(1000)}`);
 	});
 
 	it("journalFor a day without entries is empty", () => {

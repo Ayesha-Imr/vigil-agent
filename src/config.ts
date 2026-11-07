@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { SearchConfig } from "./agent/web.ts";
 import { DEFAULT_POLICY, type GovernorPolicy } from "./core/governor.ts";
+import { parseDreamSchedule } from "./memory/schedule.ts";
 
 export type ChannelId = "telegram" | "discord" | "slack" | "signal" | "whatsapp" | "http" | "cli" | "ntfy";
 
@@ -49,7 +50,10 @@ export interface VigilConfig {
 		mode: AcceptMode;
 		/** Minutes between heartbeats; 0 turns the heartbeat off. */
 		heartbeatMinutes: number;
-		/** Local time of the nightly memory consolidation, or null for none. */
+		/**
+		 * When memory is consolidated ("dreaming"): "04:00" (daily), "every 12h", "weekly sun 03:00",
+		 * a 5-field cron expression, or null for never. Also settable with /dream or by asking vigil.
+		 */
 		dreamAt: string | null;
 	};
 	/** `turnTimeoutMinutes` stops a worker turn that runs longer (default 60). */
@@ -190,6 +194,11 @@ function validate(cfg: VigilConfig): void {
 		throw new Error(`proactive.mode must be off, observe or auto`);
 	}
 	if (cfg.workers.max < 1) throw new Error("workers.max must be at least 1");
+	try {
+		parseDreamSchedule(cfg.proactive.dreamAt);
+	} catch (err) {
+		throw new Error(`proactive.dreamAt: ${(err as Error).message}`);
+	}
 	// The governor keeps a day of interrupts and a week of notices (verification/governor, WindowGap/WindowDedup).
 	if (cfg.attention.minGapMinutes > 1440) throw new Error("attention.minGapMinutes must be at most 1440 (a day)");
 	if (cfg.attention.dedupWindowMinutes > 7 * 1440) throw new Error("attention.dedupWindowMinutes must be at most 10080 (a week)");
